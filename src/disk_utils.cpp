@@ -1366,15 +1366,15 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
     const double p_val = ((double)MAX_PQ_TRAINING_SET_SIZE / (double)points_num);
     if(rank != 0){
-        int signal = 0;
-        MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        // int signal = 0;
+        // MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-        if (signal == 1) {
+        // if (signal == 1) {
             diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
                                             indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
                                             build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
                                             labels_to_medoids_path, universal_label, Lf);
-        }
+        // }
     }
     else {
         if (use_disk_pq)
@@ -1410,8 +1410,8 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     #endif
         // Whether it is cosine or inner product, we still L2 metric due to the pre-processing.
         timer.reset();
-        int signal = 1;
-        MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        // int signal = 1;
+        // MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
         diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
                                                     indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
