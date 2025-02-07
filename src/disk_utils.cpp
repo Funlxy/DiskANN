@@ -1306,7 +1306,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         mkl_set_num_threads(num_threads);
     }
 
-    diskann::cout << "Starting index build: R=" << R << " L=" << L << " Query RAM budget: " << final_index_ram_limit
+    diskann::cout << "Rank:" << rank << "Starting index build: R=" << R << " L=" << L << " Query RAM budget: " << final_index_ram_limit
                   << " Indexing ram budget: " << indexing_ram_budget << " T: " << num_threads << std::endl;
     std::string augmented_data_file, augmented_labels_file;
     if (rank==0) { // 主进程对数据进行预处理
