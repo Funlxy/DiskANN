@@ -633,18 +633,65 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                               const std::string &labels_to_medoids_file, const std::string &universal_label,
                               const uint32_t Lf)
 {
+    // MPI 
+    int world_size, world_rank;
+    MPI_Init(NULL, NULL);
+    // 获取当前进程的rank
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    // 获取总的进程数
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     size_t base_num, base_dim;
     diskann::get_bin_metadata(base_file, base_num, base_dim);
 
-    double full_index_ram = estimate_ram_usage(base_num, (uint32_t)base_dim, sizeof(T), R);
+    // double full_index_ram = estimate_ram_usage(base_num, (uint32_t)base_dim, sizeof(T), R);
 
     // TODO: Make this honest when there is filter support
     // 无需分片
-    if (full_index_ram < ram_budget * 1024 * 1024 * 1024)
-    {
-        diskann::cout << "Full index fits in RAM budget, should consume at most "
-                      << full_index_ram / (1024 * 1024 * 1024) << "GiBs, so building in one shot" << std::endl;
+    // if (full_index_ram < ram_budget * 1024 * 1024 * 1024)
+    // {
+    //     diskann::cout << "Full index fits in RAM budget, should consume at most "
+    //                   << full_index_ram / (1024 * 1024 * 1024) << "GiBs, so building in one shot" << std::endl;
 
+    //     diskann::IndexWriteParameters paras = diskann::IndexWriteParametersBuilder(L, R)
+    //                                               .with_filter_list_size(Lf)
+    //                                               .with_saturate_graph(!use_filters)
+    //                                               .with_num_threads(num_threads)
+    //                                               .build();
+    //     using TagT = uint32_t;
+    //     diskann::Index<T, TagT, LabelT> _index(compareMetric, base_dim, base_num,
+    //                                            std::make_shared<diskann::IndexWriteParameters>(paras), nullptr,
+    //                                            defaults::NUM_FROZEN_POINTS_STATIC, false, false, false,
+    //                                            build_pq_bytes > 0, build_pq_bytes, use_opq, use_filters);
+    //     if (!use_filters)
+    //         _index.build(base_file.c_str(), base_num);
+    //     else
+    //     {
+    //         if (universal_label != "")
+    //         { //  indicates no universal label
+    //             LabelT unv_label_as_num = 0;
+    //             _index.set_universal_label(unv_label_as_num);
+    //         }
+    //         _index.build_filtered_index(base_file.c_str(), label_file, base_num);
+    //     }
+    //     _index.save(mem_index_path.c_str());
+
+    //     if (use_filters)
+    //     {
+    //         // need to copy the labels_to_medoids file to the specified input
+    //         // file
+    //         std::remove(labels_to_medoids_file.c_str());
+    //         std::string mem_labels_to_medoid_file = mem_index_path + "_labels_to_medoids.txt";
+    //         copy_file(mem_labels_to_medoid_file, labels_to_medoids_file);
+    //         std::remove(mem_labels_to_medoid_file.c_str());
+    //     }
+
+    //     std::remove(medoids_file.c_str());
+    //     std::remove(centroids_file.c_str());
+    //     return 0;
+    // }
+    // 只有一个进程
+    if (world_size==1) {
+        diskann::cout << "only one process" << std::endl;
         diskann::IndexWriteParameters paras = diskann::IndexWriteParametersBuilder(L, R)
                                                   .with_filter_list_size(Lf)
                                                   .with_saturate_graph(!use_filters)
@@ -680,26 +727,34 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 
         std::remove(medoids_file.c_str());
         std::remove(centroids_file.c_str());
+        MPI_Finalize();
         return 0;
     }
-
     // where the universal label is to be saved in the final graph
     std::string final_index_universal_label_file = mem_index_path + "_universal_label.txt";
 
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
-
     Timer timer;
-    int num_parts =
-        partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget, 2 * R / 3, merged_index_prefix, 2);
-    diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
+    // TODO:这里需要修改成分区成指定分片
+    // int num_parts =
+    //     partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget, 2 * R / 3, merged_index_prefix, 2);
+    int num_parts = world_size; 
 
-    std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
-    std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
+    if (world_rank==0) { // 主进程进行分区
+        partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,2);
+        diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
+        diskann::cout << "num_parts: " << num_parts << std::endl;
+        std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
+        std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
+    }
+
 
     timer.reset();
-    // 这里实现分片
-    for (int p = 0; p < num_parts; p++)
-    {
+    MPI_Barrier(MPI_COMM_WORLD); // 等待主进程分区完毕
+    // 这里实现各个进程分片处理逻辑
+    int p = world_rank;
+    // for (int p = 0; p < num_parts; p++)
+    // {
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
         MallocExtension::instance()->ReleaseFreeMemory();
 #endif
@@ -728,11 +783,12 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                                  defaults::NUM_FROZEN_POINTS_STATIC, false, false, false, build_pq_bytes > 0,
                                  build_pq_bytes, use_opq);
         if (!use_filters)
-        {
+        {   
             _index.build(shard_base_file.c_str(), shard_base_pts);
         }
         else
         {
+            // TODO:标签处理在分布式情况下需要同步
             diskann::extract_shard_labels(label_file, shard_ids_file, shard_labels_file);
             if (universal_label != "")
             { //  indicates no universal label
@@ -749,44 +805,56 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
             std::string shard_universal_label_file = shard_index_file + "_universal_label.txt";
             if (universal_label != "")
             {
+                diskann::cout << "----------------------------here" << std::endl;
                 copy_file(shard_universal_label_file, final_index_universal_label_file);
             }
         }
 
         std::remove(shard_base_file.c_str());
-    }
+    // }
     diskann::cout << timer.elapsed_seconds_for_step("building indices on shards") << std::endl;
-
-    timer.reset();
-    diskann::merge_shards(merged_index_prefix + "_subshard-", "_mem.index", merged_index_prefix + "_subshard-",
+    // 进程同步等待合并
+    MPI_Barrier(MPI_COMM_WORLD);
+    // 仅主进程进行全局合并
+    if (world_rank==0) {
+        diskann::merge_shards(merged_index_prefix + "_subshard-", "_mem.index", merged_index_prefix + "_subshard-",
                           "_ids_uint32.bin", num_parts, R, mem_index_path, medoids_file, use_filters,
                           labels_to_medoids_file);
-    diskann::cout << timer.elapsed_seconds_for_step("merging indices") << std::endl;
-
-    // delete tempFiles
-    for (int p = 0; p < num_parts; p++)
-    {
-        std::string shard_base_file = merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
-        std::string shard_id_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_ids_uint32.bin";
-        std::string shard_labels_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_labels.txt";
-        std::string shard_index_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_mem.index";
-        std::string shard_index_file_data = shard_index_file + ".data";
-
-        std::remove(shard_base_file.c_str());
-        std::remove(shard_id_file.c_str());
-        std::remove(shard_index_file.c_str());
-        std::remove(shard_index_file_data.c_str());
-        if (use_filters)
-        {
-            std::string shard_index_label_file = shard_index_file + "_labels.txt";
-            std::string shard_index_univ_label_file = shard_index_file + "_universal_label.txt";
-            std::string shard_index_label_map_file = shard_index_file + "_labels_to_medoids.txt";
-            std::remove(shard_labels_file.c_str());
-            std::remove(shard_index_label_file.c_str());
-            std::remove(shard_index_label_map_file.c_str());
-            std::remove(shard_index_univ_label_file.c_str());
-        }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    // timer.reset();
+
+    // diskann::merge_shards(merged_index_prefix + "_subshard-", "_mem.index", merged_index_prefix + "_subshard-",
+    //                       "_ids_uint32.bin", num_parts, R, mem_index_path, medoids_file, use_filters,
+    //                       labels_to_medoids_file);
+    // diskann::cout << timer.elapsed_seconds_for_step("merging indices") << std::endl;
+
+    // // delete tempFiles
+    // for (int p = 0; p < num_parts; p++)
+    // {
+    //     std::string shard_base_file = merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
+    //     std::string shard_id_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_ids_uint32.bin";
+    //     std::string shard_labels_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_labels.txt";
+    //     std::string shard_index_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_mem.index";
+    //     std::string shard_index_file_data = shard_index_file + ".data";
+
+    //     std::remove(shard_base_file.c_str());
+    //     std::remove(shard_id_file.c_str());
+    //     std::remove(shard_index_file.c_str());
+    //     std::remove(shard_index_file_data.c_str());
+    //     if (use_filters)
+    //     {
+    //         std::string shard_index_label_file = shard_index_file + "_labels.txt";
+    //         std::string shard_index_univ_label_file = shard_index_file + "_universal_label.txt";
+    //         std::string shard_index_label_map_file = shard_index_file + "_labels_to_medoids.txt";
+    //         std::remove(shard_labels_file.c_str());
+    //         std::remove(shard_index_label_file.c_str());
+    //         std::remove(shard_index_label_map_file.c_str());
+    //         std::remove(shard_index_univ_label_file.c_str());
+    //     }
+    // }
+    MPI_Finalize();
     return 0;
 }
 

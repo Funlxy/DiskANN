@@ -478,6 +478,7 @@ int retrieve_shard_data_from_ids(const std::string data_file, std::string idmap_
 // the shards.
 // The total number of points across all shards will be k_base * num_points.
 
+// 首先需要明白之前的分片改变了什么，而直接分片又改变了什么
 template <typename T>
 int partition(const std::string data_file, const float sampling_rate, size_t num_parts, size_t max_k_means_reps,
               const std::string prefix_path, size_t k_base)
@@ -485,7 +486,7 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
     size_t train_dim;
     size_t num_train;
     float *train_data_float;
-
+    // 采样训练集
     gen_random_slice<T>(data_file, sampling_rate, train_data_float, num_train, train_dim);
 
     float *pivot_data;
@@ -513,7 +514,8 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
     // now pivots are ready. need to stream base points and assign them to
     // closest clusters.
 
-    shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    // shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
     delete[] pivot_data;
     delete[] train_data_float;
     return 0;
