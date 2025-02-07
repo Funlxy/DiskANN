@@ -18,7 +18,8 @@
 #include "pq_flash_index.h"
 #include "timer.h"
 #include "tsl/robin_set.h"
-
+// mpi 
+#include <mpi.h>
 namespace diskann
 {
 
@@ -638,6 +639,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     double full_index_ram = estimate_ram_usage(base_num, (uint32_t)base_dim, sizeof(T), R);
 
     // TODO: Make this honest when there is filter support
+    // 无需分片
     if (full_index_ram < ram_budget * 1024 * 1024 * 1024)
     {
         diskann::cout << "Full index fits in RAM budget, should consume at most "
@@ -695,6 +697,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
 
     timer.reset();
+    // 这里实现分片
     for (int p = 0; p < num_parts; p++)
     {
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
