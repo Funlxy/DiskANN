@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include "common_includes.h"
+#include <cstddef>
 
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
@@ -635,7 +636,6 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 {
     // MPI 
     int world_size, world_rank;
-    MPI_Init(NULL, NULL);
     // 获取当前进程的rank
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     // 获取总的进程数
@@ -727,7 +727,6 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 
         std::remove(medoids_file.c_str());
         std::remove(centroids_file.c_str());
-        MPI_Finalize();
         return 0;
     }
     // where the universal label is to be saved in the final graph
@@ -741,7 +740,8 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     int num_parts = world_size; 
 
     if (world_rank==0) { // 主进程进行分区
-        partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,2);
+        // 注意kbase
+        partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,1);
         diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
         diskann::cout << "num_parts: " << num_parts << std::endl;
         std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
@@ -854,7 +854,6 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     //         std::remove(shard_index_univ_label_file.c_str());
     //     }
     // }
-    MPI_Finalize();
     return 0;
 }
 
@@ -1174,6 +1173,13 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
                      const std::string &label_file, const std::string &universal_label, const uint32_t filter_threshold,
                      const uint32_t Lf)
 {
+    MPI_Init(NULL, NULL);
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    diskann::cout << "-------------------------------" << std::endl;
+
+    std::cout << "Rank " << rank << " received signal " << signal << std::endl;
+    diskann::cout << "-------------------------------" << std::endl;
     std::stringstream parser;
     parser << std::string(indexBuildParameters);
     std::string cur_param;
@@ -1272,36 +1278,14 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         "_prepped_base.bin"; // temp file for storing pre-processed base file for cosine/ mips metrics
     bool created_temp_file_for_processed_data = false;
 
+
+
+
+
     // output a new base file which contains extra dimension with sqrt(1 -
     // ||x||^2/M^2) for every x, M is max norm of all points. Extra space on
     // disk needed!
-    if (compareMetric == diskann::Metric::INNER_PRODUCT)
-    {
-        Timer timer;
-        std::cout << "Using Inner Product search, so need to pre-process base "
-                     "data into temp file. Please ensure there is additional "
-                     "(n*(d+1)*4) bytes for storing pre-processed base vectors, "
-                     "apart from the interim indices created by DiskANN and the final index."
-                  << std::endl;
-        data_file_to_use = prepped_base;
-        float max_norm_of_base = diskann::prepare_base_for_inner_products<T>(base_file, prepped_base);
-        std::string norm_file = disk_index_path + "_max_base_norm.bin";
-        diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
-        diskann::cout << timer.elapsed_seconds_for_step("preprocessing data for inner product") << std::endl;
-        created_temp_file_for_processed_data = true;
-    }
-    else if (compareMetric == diskann::Metric::COSINE)
-    {
-        Timer timer;
-        std::cout << "Normalizing data for cosine to temporary file, please ensure there is additional "
-                     "(n*d*4) bytes for storing normalized base vectors, "
-                     "apart from the interim indices created by DiskANN and the final index."
-                  << std::endl;
-        data_file_to_use = prepped_base;
-        diskann::normalize_data_file(base_file, prepped_base);
-        diskann::cout << timer.elapsed_seconds_for_step("preprocessing data for cosine") << std::endl;
-        created_temp_file_for_processed_data = true;
-    }
+
 
     uint32_t R = (uint32_t)atoi(param_list[0].c_str());
     uint32_t L = (uint32_t)atoi(param_list[1].c_str());
@@ -1330,27 +1314,55 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
 
     diskann::cout << "Starting index build: R=" << R << " L=" << L << " Query RAM budget: " << final_index_ram_limit
                   << " Indexing ram budget: " << indexing_ram_budget << " T: " << num_threads << std::endl;
-
-    auto s = std::chrono::high_resolution_clock::now();
-
-    // If there is filter support, we break-up points which have too many labels
-    // into replica dummy points which evenly distribute the filters. The rest
-    // of index build happens on the augmented base and labels
     std::string augmented_data_file, augmented_labels_file;
-    if (use_filters)
-    {
-        convert_labels_string_to_int(labels_file_original, labels_file_to_use, disk_labels_int_map_file,
-                                     universal_label);
-        augmented_data_file = index_prefix_path + "_augmented_data.bin";
-        augmented_labels_file = index_prefix_path + "_augmented_labels.txt";
-        if (filter_threshold != 0)
+    auto s = std::chrono::high_resolution_clock::now();
+    if (rank==0) { // 主进程对数据进行预处理
+        if (compareMetric == diskann::Metric::INNER_PRODUCT)
         {
-            breakup_dense_points<T>(data_file_to_use, labels_file_to_use, filter_threshold, augmented_data_file,
-                                    augmented_labels_file,
-                                    dummy_remap_file); // RKNOTE: This has large memory footprint,
-                                                       // need to make this streaming
-            data_file_to_use = augmented_data_file;
-            labels_file_to_use = augmented_labels_file;
+            Timer timer;
+            std::cout << "Using Inner Product search, so need to pre-process base "
+                        "data into temp file. Please ensure there is additional "
+                        "(n*(d+1)*4) bytes for storing pre-processed base vectors, "
+                        "apart from the interim indices created by DiskANN and the final index."
+                    << std::endl;
+            data_file_to_use = prepped_base;
+            float max_norm_of_base = diskann::prepare_base_for_inner_products<T>(base_file, prepped_base);
+            std::string norm_file = disk_index_path + "_max_base_norm.bin";
+            diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
+            diskann::cout << timer.elapsed_seconds_for_step("preprocessing data for inner product") << std::endl;
+            created_temp_file_for_processed_data = true;
+        }
+        else if (compareMetric == diskann::Metric::COSINE)
+        {
+                Timer timer;
+                std::cout << "Normalizing data for cosine to temporary file, please ensure there is additional "
+                            "(n*d*4) bytes for storing normalized base vectors, "
+                            "apart from the interim indices created by DiskANN and the final index."
+                        << std::endl;
+                data_file_to_use = prepped_base;
+                diskann::normalize_data_file(base_file, prepped_base);
+                diskann::cout << timer.elapsed_seconds_for_step("preprocessing data for cosine") << std::endl;
+                created_temp_file_for_processed_data = true;
+        }
+           
+        // If there is filter support, we break-up points which have too many labels
+        // into replica dummy points which evenly distribute the filters. The rest
+        // of index build happens on the augmented base and labels
+        if (use_filters)
+        {
+            convert_labels_string_to_int(labels_file_original, labels_file_to_use, disk_labels_int_map_file,
+                                        universal_label);
+            augmented_data_file = index_prefix_path + "_augmented_data.bin";
+            augmented_labels_file = index_prefix_path + "_augmented_labels.txt";
+            if (filter_threshold != 0)
+            {
+                breakup_dense_points<T>(data_file_to_use, labels_file_to_use, filter_threshold, augmented_data_file,
+                                        augmented_labels_file,
+                                        dummy_remap_file); // RKNOTE: This has large memory footprint,
+                                                        // need to make this streaming
+                data_file_to_use = augmented_data_file;
+                labels_file_to_use = augmented_labels_file;
+            }
         }
     }
 
@@ -1359,91 +1371,118 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     Timer timer;
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
     const double p_val = ((double)MAX_PQ_TRAINING_SET_SIZE / (double)points_num);
+    if(rank != 0){
+        int signal = 0;
+        MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        diskann::cout << "-------------------------------" << std::endl;
 
-    if (use_disk_pq)
-    {
-        generate_disk_quantized_data<T>(data_file_to_use, disk_pq_pivots_path, disk_pq_compressed_vectors_path,
-                                        compareMetric, p_val, disk_pq_dims);
-    }
-    size_t num_pq_chunks = (size_t)(std::floor)(uint64_t(final_index_ram_limit / points_num));
+        std::cout << "Rank " << rank << " received signal " << signal << std::endl;
+        diskann::cout << "-------------------------------" << std::endl;
 
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > MAX_PQ_CHUNKS ? MAX_PQ_CHUNKS : num_pq_chunks;
+        if (signal == 1) {
+            diskann::cout << "-------------------------------" << std::endl;
+            diskann::cout << "slave run" << std::endl;
+            diskann::cout << "-------------------------------" << std::endl;
 
-    if (param_list.size() >= 9 && atoi(param_list[8].c_str()) <= MAX_PQ_CHUNKS && atoi(param_list[8].c_str()) > 0)
-    {
-        std::cout << "Use quantized dimension (QD) to overwrite derived quantized "
-                     "dimension from search_DRAM_budget (B)"
-                  << std::endl;
-        num_pq_chunks = atoi(param_list[8].c_str());
-    }
-
-    diskann::cout << "Compressing " << dim << "-dimensional data into " << num_pq_chunks << " bytes per vector."
-                  << std::endl;
-
-    generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
-                               num_pq_chunks, use_opq, codebook_prefix);
-    diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
-
-// Gopal. Splitting diskann_dll into separate DLLs for search and build.
-// This code should only be available in the "build" DLL.
-#if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
-    MallocExtension::instance()->ReleaseFreeMemory();
-#endif
-    // Whether it is cosine or inner product, we still L2 metric due to the pre-processing.
-    timer.reset();
-    diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
-                                                  indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
-                                                  build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
-                                                  labels_to_medoids_path, universal_label, Lf);
-    diskann::cout << timer.elapsed_seconds_for_step("building merged vamana index") << std::endl;
-
-    timer.reset();
-    if (!use_disk_pq)
-    {
-        diskann::create_disk_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_path);
-    }
-    else
-    {
-        if (!reorder_data)
-            diskann::create_disk_layout<uint8_t>(disk_pq_compressed_vectors_path, mem_index_path, disk_index_path);
-        else
-            diskann::create_disk_layout<uint8_t>(disk_pq_compressed_vectors_path, mem_index_path, disk_index_path,
-                                                 data_file_to_use.c_str());
-    }
-    diskann::cout << timer.elapsed_seconds_for_step("generating disk layout") << std::endl;
-
-    double ten_percent_points = std::ceil(points_num * 0.1);
-    double num_sample_points =
-        ten_percent_points > MAX_SAMPLE_POINTS_FOR_WARMUP ? MAX_SAMPLE_POINTS_FOR_WARMUP : ten_percent_points;
-    double sample_sampling_rate = num_sample_points / points_num;
-    gen_random_slice<T>(data_file_to_use.c_str(), sample_base_prefix, sample_sampling_rate);
-    if (use_filters)
-    {
-        copy_file(labels_file_to_use, disk_labels_file);
-        std::remove(mem_labels_file.c_str());
-        if (universal_label != "")
-        {
-            copy_file(mem_univ_label_file, disk_univ_label_file);
-            std::remove(mem_univ_label_file.c_str());
+            diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
+                                            indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
+                                            build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
+                                            labels_to_medoids_path, universal_label, Lf);
         }
-        std::remove(augmented_data_file.c_str());
-        std::remove(augmented_labels_file.c_str());
-        std::remove(labels_file_to_use.c_str());
     }
-    if (created_temp_file_for_processed_data)
-        std::remove(prepped_base.c_str());
-    std::remove(mem_index_path.c_str());
-    std::remove((mem_index_path + ".data").c_str());
-    std::remove((mem_index_path + ".tags").c_str());
-    if (use_disk_pq)
-        std::remove(disk_pq_compressed_vectors_path.c_str());
+    else {
+        if (use_disk_pq)
+        {
+            generate_disk_quantized_data<T>(data_file_to_use, disk_pq_pivots_path, disk_pq_compressed_vectors_path,
+                                            compareMetric, p_val, disk_pq_dims);
+        }
+        size_t num_pq_chunks = (size_t)(std::floor)(uint64_t(final_index_ram_limit / points_num));
 
-    auto e = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = e - s;
-    diskann::cout << "Indexing time: " << diff.count() << std::endl;
+        num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
+        num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+        num_pq_chunks = num_pq_chunks > MAX_PQ_CHUNKS ? MAX_PQ_CHUNKS : num_pq_chunks;
 
+        if (param_list.size() >= 9 && atoi(param_list[8].c_str()) <= MAX_PQ_CHUNKS && atoi(param_list[8].c_str()) > 0)
+        {
+            std::cout << "Use quantized dimension (QD) to overwrite derived quantized "
+                        "dimension from search_DRAM_budget (B)"
+                    << std::endl;
+            num_pq_chunks = atoi(param_list[8].c_str());
+        }
+
+        diskann::cout << "Compressing " << dim << "-dimensional data into " << num_pq_chunks << " bytes per vector."
+                    << std::endl;
+
+        generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
+                                num_pq_chunks, use_opq, codebook_prefix);
+        diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
+
+    // Gopal. Splitting diskann_dll into separate DLLs for search and build.
+    // This code should only be available in the "build" DLL.
+    #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
+        MallocExtension::instance()->ReleaseFreeMemory();
+    #endif
+        diskann::cout << "-------------------------------" << std::endl;
+        diskann::cout << "master finish" << std::endl;
+        diskann::cout << "-------------------------------" << std::endl;
+        // Whether it is cosine or inner product, we still L2 metric due to the pre-processing.
+        timer.reset();
+        int signal = 1;
+        MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+        diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
+                                                    indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
+                                                    build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
+                                                    labels_to_medoids_path, universal_label, Lf);
+        diskann::cout << timer.elapsed_seconds_for_step("building merged vamana index") << std::endl;
+
+        timer.reset();
+        if (!use_disk_pq)
+        {
+            diskann::create_disk_layout<T>(data_file_to_use.c_str(), mem_index_path, disk_index_path);
+        }
+        else
+        {
+            if (!reorder_data)
+                diskann::create_disk_layout<uint8_t>(disk_pq_compressed_vectors_path, mem_index_path, disk_index_path);
+            else
+                diskann::create_disk_layout<uint8_t>(disk_pq_compressed_vectors_path, mem_index_path, disk_index_path,
+                                                    data_file_to_use.c_str());
+        }
+        diskann::cout << timer.elapsed_seconds_for_step("generating disk layout") << std::endl;
+
+        double ten_percent_points = std::ceil(points_num * 0.1);
+        double num_sample_points =
+            ten_percent_points > MAX_SAMPLE_POINTS_FOR_WARMUP ? MAX_SAMPLE_POINTS_FOR_WARMUP : ten_percent_points;
+        double sample_sampling_rate = num_sample_points / points_num;
+        gen_random_slice<T>(data_file_to_use.c_str(), sample_base_prefix, sample_sampling_rate);
+        if (use_filters)
+        {
+            copy_file(labels_file_to_use, disk_labels_file);
+            std::remove(mem_labels_file.c_str());
+            if (universal_label != "")
+            {
+                copy_file(mem_univ_label_file, disk_univ_label_file);
+                std::remove(mem_univ_label_file.c_str());
+            }
+            std::remove(augmented_data_file.c_str());
+            std::remove(augmented_labels_file.c_str());
+            std::remove(labels_file_to_use.c_str());
+        }
+        if (created_temp_file_for_processed_data)
+            std::remove(prepped_base.c_str());
+        std::remove(mem_index_path.c_str());
+        std::remove((mem_index_path + ".data").c_str());
+        std::remove((mem_index_path + ".tags").c_str());
+        if (use_disk_pq)
+            std::remove(disk_pq_compressed_vectors_path.c_str());
+
+        auto e = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = e - s;
+        diskann::cout << "finish Indexing time: " << diff.count() << std::endl;
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Finalize();
     return 0;
 }
 
