@@ -691,7 +691,6 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     // }
     // 只有一个进程
     if (world_size==1) {
-        diskann::cout << "only one process" << std::endl;
         diskann::IndexWriteParameters paras = diskann::IndexWriteParametersBuilder(L, R)
                                                   .with_filter_list_size(Lf)
                                                   .with_saturate_graph(!use_filters)
@@ -805,7 +804,6 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
             std::string shard_universal_label_file = shard_index_file + "_universal_label.txt";
             if (universal_label != "")
             {
-                diskann::cout << "----------------------------here" << std::endl;
                 copy_file(shard_universal_label_file, final_index_universal_label_file);
             }
         }
@@ -1176,10 +1174,6 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     MPI_Init(NULL, NULL);
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    diskann::cout << "-------------------------------" << std::endl;
-
-    std::cout << "Rank " << rank << " received signal " << signal << std::endl;
-    diskann::cout << "-------------------------------" << std::endl;
     std::stringstream parser;
     parser << std::string(indexBuildParameters);
     std::string cur_param;
@@ -1315,7 +1309,6 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     diskann::cout << "Starting index build: R=" << R << " L=" << L << " Query RAM budget: " << final_index_ram_limit
                   << " Indexing ram budget: " << indexing_ram_budget << " T: " << num_threads << std::endl;
     std::string augmented_data_file, augmented_labels_file;
-    auto s = std::chrono::high_resolution_clock::now();
     if (rank==0) { // 主进程对数据进行预处理
         if (compareMetric == diskann::Metric::INNER_PRODUCT)
         {
@@ -1365,6 +1358,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
             }
         }
     }
+    auto s = std::chrono::high_resolution_clock::now();
 
     size_t points_num, dim;
 
@@ -1374,16 +1368,8 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     if(rank != 0){
         int signal = 0;
         MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        diskann::cout << "-------------------------------" << std::endl;
-
-        std::cout << "Rank " << rank << " received signal " << signal << std::endl;
-        diskann::cout << "-------------------------------" << std::endl;
 
         if (signal == 1) {
-            diskann::cout << "-------------------------------" << std::endl;
-            diskann::cout << "slave run" << std::endl;
-            diskann::cout << "-------------------------------" << std::endl;
-
             diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
                                             indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
                                             build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
@@ -1422,9 +1408,6 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
         MallocExtension::instance()->ReleaseFreeMemory();
     #endif
-        diskann::cout << "-------------------------------" << std::endl;
-        diskann::cout << "master finish" << std::endl;
-        diskann::cout << "-------------------------------" << std::endl;
         // Whether it is cosine or inner product, we still L2 metric due to the pre-processing.
         timer.reset();
         int signal = 1;
