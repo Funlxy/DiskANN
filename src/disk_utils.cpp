@@ -764,7 +764,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 
         std::string shard_labels_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_labels.txt";
 
-        retrieve_shard_data_from_ids<T>(base_file, shard_ids_file, shard_base_file);
+        // retrieve_shard_data_from_ids<T>(base_file, shard_ids_file, shard_base_file);
 
         std::string shard_index_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_mem.index";
 

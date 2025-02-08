@@ -406,6 +406,7 @@ int shard_data_into_clusters_only_ids(const std::string data_file, float *pivots
     return 0;
 }
 
+//这里进行操作时，需要从base数据集中读取，然后又写入，非常耗时应该
 template <typename T>
 int retrieve_shard_data_from_ids(const std::string data_file, std::string idmap_filename, std::string data_filename)
 {
@@ -514,8 +515,8 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
     // now pivots are ready. need to stream base points and assign them to
     // closest clusters.
 
-    // shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
-    shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    // shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
     delete[] pivot_data;
     delete[] train_data_float;
     return 0;
