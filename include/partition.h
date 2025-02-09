@@ -34,6 +34,10 @@ int shard_data_into_clusters(const std::string data_file, float *pivots, const s
                              const size_t k_base, std::string prefix_path);
 
 template <typename T>
+int shard_data_into_clusters_mem(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
+                            const size_t k_base, std::string prefix_path);
+
+template <typename T>
 int shard_data_into_clusters_only_ids(const std::string data_file, float *pivots, const size_t num_centers,
                                       const size_t dim, const size_t k_base, std::string prefix_path);
 

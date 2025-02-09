@@ -63,7 +63,9 @@ DISKANN_DLLEXPORT T *load_warmup(const std::string &cache_warmup_file, uint64_t 
 
 DISKANN_DLLEXPORT int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suffix,
                                    const std::string &idmaps_prefix, const std::string &idmaps_suffix,
-                                   const uint64_t nshards, uint32_t max_degree, const std::string &output_vamana,
+                                   const uint64_t nshards, uint32_t max_degree,
+                                   const std::vector<std::vector<uint32_t>> &idmaps,
+                                   const std::string &output_vamana,
                                    const std::string &medoids_file, bool use_filters = false,
                                    const std::string &labels_to_medoids_file = std::string(""));
 

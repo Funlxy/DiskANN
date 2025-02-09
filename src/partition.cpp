@@ -231,6 +231,98 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test, float *pivot
     delete[] block_closest_centers;
     return 0;
 }
+template <typename T>
+int shard_data_into_clusters_mem(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
+                             const size_t k_base, std::string prefix_path)
+{
+    size_t read_blk_size = 64 * 1024 * 1024;
+    //  uint64_t write_blk_size = 64 * 1024 * 1024;
+    // create cached reader + writer
+    cached_ifstream base_reader(data_file, read_blk_size);
+    uint32_t npts32;
+    uint32_t basedim32;
+    base_reader.read((char *)&npts32, sizeof(uint32_t));
+    base_reader.read((char *)&basedim32, sizeof(uint32_t));
+    size_t num_points = npts32;
+    if (basedim32 != dim)
+    {
+        diskann::cout << "Error. dimensions dont match for train set and base set" << std::endl;
+        return -1;
+    }
+
+    std::unique_ptr<size_t[]> shard_counts = std::make_unique<size_t[]>(num_centers);
+    std::vector<std::ofstream> shard_data_writer(num_centers);
+    std::vector<std::ofstream> shard_idmap_writer(num_centers);
+    uint32_t dummy_size = 0;
+    uint32_t const_one = 1;
+
+    // 这里写入每个分片的元数据
+    for (size_t i = 0; i < num_centers; i++)
+    {
+        std::string data_filename = prefix_path + "_subshard-" + std::to_string(i) + ".bin";
+        std::string idmap_filename = prefix_path + "_subshard-" + std::to_string(i) + "_ids_uint32.bin";
+        shard_data_writer[i] = std::ofstream(data_filename.c_str(), std::ios::binary);
+        shard_idmap_writer[i] = std::ofstream(idmap_filename.c_str(), std::ios::binary);
+        shard_data_writer[i].write((char *)&dummy_size, sizeof(uint32_t));
+        shard_data_writer[i].write((char *)&basedim32, sizeof(uint32_t));
+        shard_idmap_writer[i].write((char *)&dummy_size, sizeof(uint32_t));
+        shard_idmap_writer[i].write((char *)&const_one, sizeof(uint32_t));
+        shard_counts[i] = 0;
+    }
+
+    size_t block_size = num_points <= BLOCK_SIZE ? num_points : BLOCK_SIZE;
+    std::unique_ptr<uint32_t[]> block_closest_centers = std::make_unique<uint32_t[]>(block_size * k_base);
+    std::unique_ptr<T[]> block_data_T = std::make_unique<T[]>(block_size * dim);
+    std::unique_ptr<float[]> block_data_float = std::make_unique<float[]>(block_size * dim);
+
+    size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
+    // 按block处理
+    for (size_t block = 0; block < num_blocks; block++)
+    {
+        size_t start_id = block * block_size;
+        size_t end_id = (std::min)((block + 1) * block_size, num_points);
+        size_t cur_blk_size = end_id - start_id;
+        // 读取
+        base_reader.read((char *)block_data_T.get(), sizeof(T) * (cur_blk_size * dim));
+        // 统一转换为float,但存到文件中的实际上还是原始数据类型的数据
+        diskann::convert_types<T, float>(block_data_T.get(), block_data_float.get(), cur_blk_size, dim);
+
+        math_utils::compute_closest_centers(block_data_float.get(), cur_blk_size, dim, pivots, num_centers, k_base,
+                                            block_closest_centers.get());
+        // block_closest_centers存的是每个点按距离排序的质心
+        for (size_t p = 0; p < cur_blk_size; p++)
+        {   
+            for (size_t p1 = 0; p1 < k_base; p1++)
+            {
+                size_t shard_id = block_closest_centers[p * k_base + p1];
+                uint32_t original_point_map_id = (uint32_t)(start_id + p);
+                shard_data_writer[shard_id].write((char *)(block_data_T.get() + p * dim), sizeof(T) * dim);
+                shard_idmap_writer[shard_id].write((char *)&original_point_map_id, sizeof(uint32_t));
+                shard_counts[shard_id]++;
+                // shard_data[shard_id] 
+            }
+        }
+    }
+    // 这里更新元数据(每个分片的数量)
+    size_t total_count = 0;
+    diskann::cout << "Actual shard sizes: " << std::flush;
+    for (size_t i = 0; i < num_centers; i++)
+    {
+        uint32_t cur_shard_count = (uint32_t)shard_counts[i];
+        total_count += cur_shard_count;
+        diskann::cout << cur_shard_count << " ";
+        shard_data_writer[i].seekp(0);
+        shard_data_writer[i].write((char *)&cur_shard_count, sizeof(uint32_t));
+        shard_data_writer[i].close();
+        shard_idmap_writer[i].seekp(0);
+        shard_idmap_writer[i].write((char *)&cur_shard_count, sizeof(uint32_t));
+        shard_idmap_writer[i].close();
+    }
+
+    diskann::cout << "\n Partitioned " << num_points << " with replication factor " << k_base << " to get "
+                  << total_count << " points across " << num_centers << " shards " << std::endl;
+    return 0;
+}
 
 template <typename T>
 int shard_data_into_clusters(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
@@ -257,6 +349,7 @@ int shard_data_into_clusters(const std::string data_file, float *pivots, const s
     uint32_t dummy_size = 0;
     uint32_t const_one = 1;
 
+    // 这里写入每个分片的元数据
     for (size_t i = 0; i < num_centers; i++)
     {
         std::string data_filename = prefix_path + "_subshard-" + std::to_string(i) + ".bin";
@@ -276,19 +369,20 @@ int shard_data_into_clusters(const std::string data_file, float *pivots, const s
     std::unique_ptr<float[]> block_data_float = std::make_unique<float[]>(block_size * dim);
 
     size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
-
+    // 按block处理
     for (size_t block = 0; block < num_blocks; block++)
     {
         size_t start_id = block * block_size;
         size_t end_id = (std::min)((block + 1) * block_size, num_points);
         size_t cur_blk_size = end_id - start_id;
-
+        // 读取
         base_reader.read((char *)block_data_T.get(), sizeof(T) * (cur_blk_size * dim));
+        // 统一转换为float,但存到文件中的实际上还是原始数据类型的数据
         diskann::convert_types<T, float>(block_data_T.get(), block_data_float.get(), cur_blk_size, dim);
 
         math_utils::compute_closest_centers(block_data_float.get(), cur_blk_size, dim, pivots, num_centers, k_base,
                                             block_closest_centers.get());
-
+        // block_closest_centers存的是每个点按距离排序的质心
         for (size_t p = 0; p < cur_blk_size; p++)
         {
             for (size_t p1 = 0; p1 < k_base; p1++)
@@ -301,7 +395,7 @@ int shard_data_into_clusters(const std::string data_file, float *pivots, const s
             }
         }
     }
-
+    // 这里更新元数据(每个分片的数量)
     size_t total_count = 0;
     diskann::cout << "Actual shard sizes: " << std::flush;
     for (size_t i = 0; i < num_centers; i++)
@@ -505,16 +599,17 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
 
     // Process Global k-means for kmeans_partitioning Step
     diskann::cout << "Processing global k-means (kmeans_partitioning Step)" << std::endl;
+    // 这里筛选质心
     kmeans::kmeanspp_selecting_pivots(train_data_float, num_train, train_dim, pivot_data, num_parts);
-
     kmeans::run_lloyds(train_data_float, num_train, train_dim, pivot_data, num_parts, max_k_means_reps, NULL, NULL);
 
+    // 保存每个分片的质心
     diskann::cout << "Saving global k-center pivots" << std::endl;
     diskann::save_bin<float>(output_file.c_str(), pivot_data, (size_t)num_parts, train_dim);
 
     // now pivots are ready. need to stream base points and assign them to
     // closest clusters.
-
+    // 这里实际保存分片的数据
     shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
     // shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
     delete[] pivot_data;

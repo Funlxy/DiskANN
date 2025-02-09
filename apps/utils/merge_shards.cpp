@@ -36,7 +36,7 @@ int main(int argc, char **argv)
     uint32_t max_degree = (uint64_t)std::atoi(argv[6]);
     std::string output_index(argv[7]);
     std::string output_medoids(argv[8]);
-
-    return diskann::merge_shards(vamana_prefix, vamana_suffix, idmaps_prefix, idmaps_suffix, nshards, max_degree,
-                                 output_index, output_medoids);
+    return 0;
+    // return diskann::merge_shards(vamana_prefix, vamana_suffix, idmaps_prefix, idmaps_suffix, nshards, max_degree,
+                                //  output_index, output_medoids);
 }

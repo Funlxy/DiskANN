@@ -3,6 +3,8 @@
 
 #include "common_includes.h"
 #include <cstddef>
+#include <cstdint>
+#include <vector>
 
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
@@ -239,20 +241,24 @@ void read_idmap(const std::string &fname, std::vector<uint32_t> &ivecs)
     reader.read((char *)ivecs.data(), ((size_t)npts32) * sizeof(uint32_t));
     reader.close();
 }
-
+// diskann::merge_shards(merged_index_prefix + "_subshard-", "_mem.index", merged_index_prefix + "_subshard-",
+//     "_ids_uint32.bin", num_parts, R, mem_index_path, medoids_file, use_filters,
+//     labels_to_medoids_file);
 int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suffix, const std::string &idmaps_prefix,
                  const std::string &idmaps_suffix, const uint64_t nshards, uint32_t max_degree,
+                 const std::vector<std::vector<uint32_t>> &idmaps,
                  const std::string &output_vamana, const std::string &medoids_file, bool use_filters,
                  const std::string &labels_to_medoids_file)
 {
     // Read ID maps
-    std::vector<std::string> vamana_names(nshards);
-    std::vector<std::vector<uint32_t>> idmaps(nshards);
-    for (uint64_t shard = 0; shard < nshards; shard++)
-    {
-        vamana_names[shard] = vamana_prefix + std::to_string(shard) + vamana_suffix;
-        read_idmap(idmaps_prefix + std::to_string(shard) + idmaps_suffix, idmaps[shard]);
-    }
+    std::vector<std::string> vamana_names(nshards); // merged_index_prefix + "_subshard-" + shard_id + "_mem.index"应该是每个分片的索引文件
+    // TODO：作为参数传入
+    // std::vector<std::vector<uint32_t>> idmaps(nshards);
+    // for (uint64_t shard = 0; shard < nshards; shard++)
+    // {
+    //     vamana_names[shard] = vamana_prefix + std::to_string(shard) + vamana_suffix;
+    //     read_idmap(idmaps_prefix + std::to_string(shard) + idmaps_suffix, idmaps[shard]);
+    // }
 
     // find max node id
     size_t nnodes = 0;
@@ -269,6 +275,7 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
     diskann::cout << "# nodes: " << nnodes << ", max. degree: " << max_degree << std::endl;
 
     // compute inverse map: node -> shards
+    // 遍历每个shards,创建id到shards的映射
     std::vector<std::pair<uint32_t, uint32_t>> node_shard;
     node_shard.reserve(nelems);
     for (size_t shard = 0; shard < nshards; shard++)
@@ -287,62 +294,63 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
 
     // will merge all the labels to medoids files of each shard into one
     // combined file
-    if (use_filters)
-    {
-        std::unordered_map<uint32_t, std::vector<uint32_t>> global_label_to_medoids;
+    // if (use_filters)
+    // {
+    //     std::unordered_map<uint32_t, std::vector<uint32_t>> global_label_to_medoids;
 
-        for (size_t i = 0; i < nshards; i++)
-        {
-            std::ifstream mapping_reader;
-            std::string map_file = vamana_names[i] + "_labels_to_medoids.txt";
-            mapping_reader.open(map_file);
+    //     for (size_t i = 0; i < nshards; i++)
+    //     {
+    //         std::ifstream mapping_reader;
+    //         std::string map_file = vamana_names[i] + "_labels_to_medoids.txt";
+    //         mapping_reader.open(map_file);
 
-            std::string line, token;
-            uint32_t line_cnt = 0;
+    //         std::string line, token;
+    //         uint32_t line_cnt = 0;
 
-            while (std::getline(mapping_reader, line))
-            {
-                std::istringstream iss(line);
-                uint32_t cnt = 0;
-                uint32_t medoid = 0;
-                uint32_t label = 0;
-                while (std::getline(iss, token, ','))
-                {
-                    token.erase(std::remove(token.begin(), token.end(), '\n'), token.end());
-                    token.erase(std::remove(token.begin(), token.end(), '\r'), token.end());
+    //         while (std::getline(mapping_reader, line))
+    //         {
+    //             std::istringstream iss(line);
+    //             uint32_t cnt = 0;
+    //             uint32_t medoid = 0;
+    //             uint32_t label = 0;
+    //             while (std::getline(iss, token, ','))
+    //             {
+    //                 token.erase(std::remove(token.begin(), token.end(), '\n'), token.end());
+    //                 token.erase(std::remove(token.begin(), token.end(), '\r'), token.end());
 
-                    uint32_t token_as_num = std::stoul(token);
+    //                 uint32_t token_as_num = std::stoul(token);
 
-                    if (cnt == 0)
-                        label = token_as_num;
-                    else
-                        medoid = token_as_num;
-                    cnt++;
-                }
-                global_label_to_medoids[label].push_back(idmaps[i][medoid]);
-                line_cnt++;
-            }
-            mapping_reader.close();
-        }
+    //                 if (cnt == 0)
+    //                     label = token_as_num;
+    //                 else
+    //                     medoid = token_as_num;
+    //                 cnt++;
+    //             }
+    //             global_label_to_medoids[label].push_back(idmaps[i][medoid]);
+    //             line_cnt++;
+    //         }
+    //         mapping_reader.close();
+    //     }
 
-        std::ofstream mapping_writer(labels_to_medoids_file);
-        assert(mapping_writer.is_open());
-        for (auto iter : global_label_to_medoids)
-        {
-            mapping_writer << iter.first << ", ";
-            auto &vec = iter.second;
-            for (uint32_t idx = 0; idx < vec.size() - 1; idx++)
-            {
-                mapping_writer << vec[idx] << ", ";
-            }
-            mapping_writer << vec[vec.size() - 1] << std::endl;
-        }
-        mapping_writer.close();
-    }
+    //     std::ofstream mapping_writer(labels_to_medoids_file);
+    //     assert(mapping_writer.is_open());
+    //     for (auto iter : global_label_to_medoids)
+    //     {
+    //         mapping_writer << iter.first << ", ";
+    //         auto &vec = iter.second;
+    //         for (uint32_t idx = 0; idx < vec.size() - 1; idx++)
+    //         {
+    //             mapping_writer << vec[idx] << ", ";
+    //         }
+    //         mapping_writer << vec[vec.size() - 1] << std::endl;
+    //     }
+    //     mapping_writer.close();
+    // }
 
     // create cached vamana readers
+    // 读取分片索引文件
     std::vector<cached_ifstream> vamana_readers(nshards);
-    for (size_t i = 0; i < nshards; i++)
+    for (size_t i = 0; i < nshards; i++) // TODO:这里是什么？是文件大小
     {
         vamana_readers[i].open(vamana_names[i], BUFFER_SIZE_FOR_CACHED_IO);
         size_t expected_file_size;
@@ -354,6 +362,7 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
                                                                                    // medoid_id + frozen_point info
 
     // create cached vamana writers
+    // 这个是用来写合并后的索引文件的，应该是必须的
     cached_ofstream merged_vamana_writer(output_vamana, BUFFER_SIZE_FOR_CACHED_IO);
 
     size_t merged_index_size = vamana_metadata_size; // we initialize the size of the merged index to
@@ -363,6 +372,7 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
                                sizeof(uint64_t)); // we will overwrite the index size at the end
 
     uint32_t output_width = max_degree;
+    // 所有分片最大图度数
     uint32_t max_input_width = 0;
     // read width from each vamana to advance buffer by sizeof(uint32_t) bytes
     for (auto &reader : vamana_readers)
@@ -373,7 +383,7 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
     }
 
     diskann::cout << "Max input width: " << max_input_width << ", output width: " << output_width << std::endl;
-
+    // 这个写入口点也是必须的，为了搜索使用
     merged_vamana_writer.write((char *)&output_width, sizeof(uint32_t));
     std::ofstream medoid_writer(medoids_file.c_str(), std::ios::binary);
     uint32_t nshards_u32 = (uint32_t)nshards;
@@ -384,6 +394,7 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
     uint64_t vamana_index_frozen = 0; // as of now the functionality to merge many overlapping vamana
                                       // indices is supported only for bulk indices without frozen point.
                                       // Hence the final index will also not have any frozen points.
+    // 这里写每个分片的入口点
     for (uint64_t shard = 0; shard < nshards; shard++)
     {
         uint32_t medoid;
@@ -733,16 +744,13 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 
     std::string merged_index_prefix = mem_index_path + "_tempFiles";
     Timer timer;
-    // TODO:这里需要修改成分区成指定分片
-    // int num_parts =
-    //     partition_with_ram_budget<T>(base_file, sampling_rate, ram_budget, 2 * R / 3, merged_index_prefix, 2);
     int num_parts = world_size; 
-
+    // 定义一下相关数据
+    // float* pivot_data;
     if (world_rank==0) { // 主进程进行分区
         // 注意kbase
-        partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,1);
+        partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,2);
         diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
-        diskann::cout << "num_parts: " << num_parts << std::endl;
         std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
         std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
     }
@@ -757,7 +765,8 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
         MallocExtension::instance()->ReleaseFreeMemory();
 #endif
-
+        // 需要的几个文件
+        // 1.base 2.id 3.label(这个是比较特殊的)
         std::string shard_base_file = merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
 
         std::string shard_ids_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_ids_uint32.bin";
@@ -774,6 +783,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                                                               .with_num_threads(num_threads)
                                                               .build();
 
+        // 这里的东西也应该保存在内存中
         uint64_t shard_base_dim, shard_base_pts;
         get_bin_metadata(shard_base_file, shard_base_pts, shard_base_dim);
 
@@ -783,6 +793,8 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                                  build_pq_bytes, use_opq);
         if (!use_filters)
         {   
+            // TODO：这里需要传入文件名，看看可不可以直接传入数据进去
+            // 注意分片构建索引时id从0开始
             _index.build(shard_base_file.c_str(), shard_base_pts);
         }
         else
@@ -796,6 +808,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
             }
             _index.build_filtered_index(shard_base_file.c_str(), shard_labels_file, shard_base_pts);
         }
+        // 这里保存index,需要改成传回去
         _index.save(shard_index_file.c_str());
         // copy universal label file from first shard to the final destination
         // index, since all shards anyway share the universal label
@@ -815,8 +828,16 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     MPI_Barrier(MPI_COMM_WORLD);
     // 仅主进程进行全局合并
     if (world_rank==0) {
+        // 这里也需要改
+        // TODO:
+        std::vector<std::vector<uint32_t>> idmaps(num_parts);
+        for (uint64_t shard = 0; shard < num_parts; shard++)
+        {
+            std::string shard_ids_file = merged_index_prefix + "_subshard-" + std::to_string(shard) + "_ids_uint32.bin";
+            read_idmap(shard_ids_file, idmaps[shard]);
+        }
         diskann::merge_shards(merged_index_prefix + "_subshard-", "_mem.index", merged_index_prefix + "_subshard-",
-                          "_ids_uint32.bin", num_parts, R, mem_index_path, medoids_file, use_filters,
+                          "_ids_uint32.bin", num_parts, R, idmaps, mem_index_path, medoids_file, use_filters,
                           labels_to_medoids_file);
     }
     MPI_Barrier(MPI_COMM_WORLD);
