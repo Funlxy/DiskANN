@@ -7,6 +7,7 @@
 #include <stack>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "neighbor.h"
 #include "parameters.h"
@@ -35,7 +36,7 @@ int shard_data_into_clusters(const std::string data_file, float *pivots, const s
 
 template <typename T>
 int shard_data_into_clusters_mem(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
-                            const size_t k_base, std::string prefix_path);
+                            const size_t k_base, std::string prefix_path, std::vector<std::vector<T>> &shard_data);
 
 template <typename T>
 int shard_data_into_clusters_only_ids(const std::string data_file, float *pivots, const size_t num_centers,
@@ -47,6 +48,11 @@ int retrieve_shard_data_from_ids(const std::string data_file, std::string idmap_
 template <typename T>
 int partition(const std::string data_file, const float sampling_rate, size_t num_centers, size_t max_k_means_reps,
               const std::string prefix_path, size_t k_base);
+
+template <typename T>
+int partition_mem(const std::string data_file, const float sampling_rate, size_t num_parts, size_t max_k_means_reps,
+              const std::string prefix_path, size_t k_base, std::vector<std::vector<T>> &shard_data);
+
 
 template <typename T>
 int partition_with_ram_budget(const std::string data_file, const double sampling_rate, double ram_budget,

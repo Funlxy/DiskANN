@@ -2,12 +2,15 @@
 // Licensed under the MIT license.
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <sstream>
 #include <string>
 
 #include <omp.h>
+#include <vector>
+#include "mpi.h"
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
 
@@ -233,10 +236,9 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test, float *pivot
 }
 template <typename T>
 int shard_data_into_clusters_mem(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
-                             const size_t k_base, std::string prefix_path)
+                             const size_t k_base, std::string prefix_path, std::vector<std::vector<T>> &shard_data)
 {
     size_t read_blk_size = 64 * 1024 * 1024;
-    //  uint64_t write_blk_size = 64 * 1024 * 1024;
     // create cached reader + writer
     cached_ifstream base_reader(data_file, read_blk_size);
     uint32_t npts32;
@@ -251,7 +253,6 @@ int shard_data_into_clusters_mem(const std::string data_file, float *pivots, con
     }
 
     std::unique_ptr<size_t[]> shard_counts = std::make_unique<size_t[]>(num_centers);
-    std::vector<std::ofstream> shard_data_writer(num_centers);
     std::vector<std::ofstream> shard_idmap_writer(num_centers);
     uint32_t dummy_size = 0;
     uint32_t const_one = 1;
@@ -259,12 +260,8 @@ int shard_data_into_clusters_mem(const std::string data_file, float *pivots, con
     // 这里写入每个分片的元数据
     for (size_t i = 0; i < num_centers; i++)
     {
-        std::string data_filename = prefix_path + "_subshard-" + std::to_string(i) + ".bin";
         std::string idmap_filename = prefix_path + "_subshard-" + std::to_string(i) + "_ids_uint32.bin";
-        shard_data_writer[i] = std::ofstream(data_filename.c_str(), std::ios::binary);
         shard_idmap_writer[i] = std::ofstream(idmap_filename.c_str(), std::ios::binary);
-        shard_data_writer[i].write((char *)&dummy_size, sizeof(uint32_t));
-        shard_data_writer[i].write((char *)&basedim32, sizeof(uint32_t));
         shard_idmap_writer[i].write((char *)&dummy_size, sizeof(uint32_t));
         shard_idmap_writer[i].write((char *)&const_one, sizeof(uint32_t));
         shard_counts[i] = 0;
@@ -274,7 +271,7 @@ int shard_data_into_clusters_mem(const std::string data_file, float *pivots, con
     std::unique_ptr<uint32_t[]> block_closest_centers = std::make_unique<uint32_t[]>(block_size * k_base);
     std::unique_ptr<T[]> block_data_T = std::make_unique<T[]>(block_size * dim);
     std::unique_ptr<float[]> block_data_float = std::make_unique<float[]>(block_size * dim);
-
+    // std::vector<std::vector<T>> shard_data(num_centers);
     size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
     // 按block处理
     for (size_t block = 0; block < num_blocks; block++)
@@ -296,10 +293,10 @@ int shard_data_into_clusters_mem(const std::string data_file, float *pivots, con
             {
                 size_t shard_id = block_closest_centers[p * k_base + p1];
                 uint32_t original_point_map_id = (uint32_t)(start_id + p);
-                shard_data_writer[shard_id].write((char *)(block_data_T.get() + p * dim), sizeof(T) * dim);
+                // 改为内存
+                shard_data[shard_id].insert(shard_data[shard_id].end(), block_data_T.get() + p * dim, block_data_T.get() + (p + 1) * dim);
                 shard_idmap_writer[shard_id].write((char *)&original_point_map_id, sizeof(uint32_t));
                 shard_counts[shard_id]++;
-                // shard_data[shard_id] 
             }
         }
     }
@@ -311,14 +308,10 @@ int shard_data_into_clusters_mem(const std::string data_file, float *pivots, con
         uint32_t cur_shard_count = (uint32_t)shard_counts[i];
         total_count += cur_shard_count;
         diskann::cout << cur_shard_count << " ";
-        shard_data_writer[i].seekp(0);
-        shard_data_writer[i].write((char *)&cur_shard_count, sizeof(uint32_t));
-        shard_data_writer[i].close();
         shard_idmap_writer[i].seekp(0);
         shard_idmap_writer[i].write((char *)&cur_shard_count, sizeof(uint32_t));
         shard_idmap_writer[i].close();
     }
-
     diskann::cout << "\n Partitioned " << num_points << " with replication factor " << k_base << " to get "
                   << total_count << " points across " << num_centers << " shards " << std::endl;
     return 0;
@@ -618,6 +611,53 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
 }
 
 template <typename T>
+int partition_mem(const std::string data_file, const float sampling_rate, size_t num_parts, size_t max_k_means_reps,
+              const std::string prefix_path, size_t k_base, std::vector<std::vector<T>> &shard_data)
+{
+    size_t train_dim;
+    size_t num_train;
+    float *train_data_float;
+    // 采样训练集
+    gen_random_slice<T>(data_file, sampling_rate, train_data_float, num_train, train_dim);
+
+    float *pivot_data;
+
+    std::string cur_file = std::string(prefix_path);
+    std::string output_file;
+
+    // kmeans_partitioning on training data
+
+    //  cur_file = cur_file + "_kmeans_partitioning-" +
+    //  std::to_string(num_parts);
+    output_file = cur_file + "_centroids.bin";
+
+    pivot_data = new float[num_parts * train_dim];
+
+    // Process Global k-means for kmeans_partitioning Step
+    diskann::cout << "Processing global k-means (kmeans_partitioning Step)" << std::endl;
+    // 这里筛选质心
+    kmeans::kmeanspp_selecting_pivots(train_data_float, num_train, train_dim, pivot_data, num_parts);
+    kmeans::run_lloyds(train_data_float, num_train, train_dim, pivot_data, num_parts, max_k_means_reps, NULL, NULL);
+
+    // 保存每个分片的质心
+    diskann::cout << "Saving global k-center pivots" << std::endl;
+    diskann::save_bin<float>(output_file.c_str(), pivot_data, (size_t)num_parts, train_dim);
+
+    // now pivots are ready. need to stream base points and assign them to
+    // closest clusters.
+    // 这里实际保存分片的数据
+    // shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    // shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    shard_data_into_clusters_mem<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path, shard_data);
+    delete[] pivot_data;
+    delete[] train_data_float;
+    return 0;
+}
+
+
+
+
+template <typename T>
 int partition_with_ram_budget(const std::string data_file, const double sampling_rate, double ram_budget,
                               size_t graph_degree, const std::string prefix_path, size_t k_base)
 {
@@ -731,7 +771,21 @@ template DISKANN_DLLEXPORT int partition<uint8_t>(const std::string data_file, c
 template DISKANN_DLLEXPORT int partition<float>(const std::string data_file, const float sampling_rate,
                                                 size_t num_centers, size_t max_k_means_reps,
                                                 const std::string prefix_path, size_t k_base);
-
+template DISKANN_DLLEXPORT int partition_mem<int8_t>(const std::string data_file, const float sampling_rate,
+                                                size_t num_centers, size_t max_k_means_reps,
+                                                const std::string prefix_path, size_t k_base, std::vector<std::vector<int8_t>> &shard_data);
+template DISKANN_DLLEXPORT int partition_mem<uint8_t>(const std::string data_file, const float sampling_rate,
+                                                size_t num_centers, size_t max_k_means_reps,
+                                                const std::string prefix_path, size_t k_base, std::vector<std::vector<uint8_t>> &shard_data);
+template DISKANN_DLLEXPORT int partition_mem<float>(const std::string data_file, const float sampling_rate,
+                                                size_t num_centers, size_t max_k_means_reps,
+                                                const std::string prefix_path, size_t k_base, std::vector<std::vector<float>> &shard_data);
+template DISKANN_DLLEXPORT int shard_data_into_clusters_mem<int8_t>(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
+                                                const size_t k_base, std::string prefix_path, std::vector<std::vector<int8_t>> &shard_data);
+template DISKANN_DLLEXPORT int shard_data_into_clusters_mem<uint8_t>(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
+                                                const size_t k_base, std::string prefix_path, std::vector<std::vector<uint8_t>> &shard_data);
+template DISKANN_DLLEXPORT int shard_data_into_clusters_mem<float>(const std::string data_file, float *pivots, const size_t num_centers, const size_t dim,
+                                                const size_t k_base, std::string prefix_path, std::vector<std::vector<float>> &shard_data);
 template DISKANN_DLLEXPORT int partition_with_ram_budget<int8_t>(const std::string data_file,
                                                                  const double sampling_rate, double ram_budget,
                                                                  size_t graph_degree, const std::string prefix_path,

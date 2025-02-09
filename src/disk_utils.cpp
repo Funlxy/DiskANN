@@ -747,15 +747,21 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     int num_parts = world_size; 
     // 定义一下相关数据
     // float* pivot_data;
+    std::vector<std::vector<T>> shard_data(num_parts);
     if (world_rank==0) { // 主进程进行分区
         // 注意kbase
-        partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,2);
+        partition_mem<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,2,shard_data);
+        // partition<T>(base_file,sampling_rate,num_parts,15,merged_index_prefix,2);
+
         diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
         std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
         std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
-
+        for (int i = 0 ; i < num_parts ; i ++){
+            diskann::cout << shard_data[i].size() << std::endl;
+        }
     }
-
+    // MPI_Scatterv(const void *sendbuf, const int *sendcounts, const int *displs, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, int root, MPI_Comm comm)
+    // MPI_Send(&args.newCounts[i], 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
 
     timer.reset();
     MPI_Barrier(MPI_COMM_WORLD); // 等待主进程分区完毕
