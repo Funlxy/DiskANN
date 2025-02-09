@@ -610,8 +610,8 @@ int partition(const std::string data_file, const float sampling_rate, size_t num
     // now pivots are ready. need to stream base points and assign them to
     // closest clusters.
     // 这里实际保存分片的数据
-    shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
-    // shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    // shard_data_into_clusters<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
+    shard_data_into_clusters_only_ids<T>(data_file, pivot_data, num_parts, train_dim, k_base, prefix_path);
     delete[] pivot_data;
     delete[] train_data_float;
     return 0;

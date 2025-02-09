@@ -753,75 +753,61 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
         diskann::cout << timer.elapsed_seconds_for_step("partitioning data ") << std::endl;
         std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
         std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
+
     }
 
 
     timer.reset();
     MPI_Barrier(MPI_COMM_WORLD); // 等待主进程分区完毕
     // 这里实现各个进程分片处理逻辑
-    int p = world_rank;
-    // for (int p = 0; p < num_parts; p++)
-    // {
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
         MallocExtension::instance()->ReleaseFreeMemory();
 #endif
-        // 需要的几个文件
-        // 1.base 2.id 3.label(这个是比较特殊的)
-        std::string shard_base_file = merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
+    // 需要的几个文件
+    // 1.base 2.id 3.label(这个是比较特殊的)
+    int p = world_rank;
+    std::string shard_base_file = merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
 
-        std::string shard_ids_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_ids_uint32.bin";
+    std::string shard_ids_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_ids_uint32.bin";
 
-        std::string shard_labels_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_labels.txt";
+    std::string shard_labels_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_labels.txt";
 
-        // retrieve_shard_data_from_ids<T>(base_file, shard_ids_file, shard_base_file);
+    retrieve_shard_data_from_ids<T>(base_file, shard_ids_file, shard_base_file);
 
-        std::string shard_index_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_mem.index";
+    std::string shard_index_file = merged_index_prefix + "_subshard-" + std::to_string(p) + "_mem.index";
 
-        diskann::IndexWriteParameters low_degree_params = diskann::IndexWriteParametersBuilder(L, 2 * R / 3)
-                                                              .with_filter_list_size(Lf)
-                                                              .with_saturate_graph(false)
-                                                              .with_num_threads(num_threads)
-                                                              .build();
+    diskann::IndexWriteParameters low_degree_params = diskann::IndexWriteParametersBuilder(L, 2 * R / 3)
+                                                            .with_filter_list_size(Lf)
+                                                            .with_saturate_graph(false)
+                                                            .with_num_threads(num_threads)
+                                                            .build();
 
-        // 这里的东西也应该保存在内存中
-        uint64_t shard_base_dim, shard_base_pts;
-        get_bin_metadata(shard_base_file, shard_base_pts, shard_base_dim);
+    // 这里的东西也应该保存在内存中
+    uint64_t shard_base_dim, shard_base_pts;
+    get_bin_metadata(shard_base_file, shard_base_pts, shard_base_dim);
 
-        diskann::Index<T> _index(compareMetric, shard_base_dim, shard_base_pts,
-                                 std::make_shared<diskann::IndexWriteParameters>(low_degree_params), nullptr,
-                                 defaults::NUM_FROZEN_POINTS_STATIC, false, false, false, build_pq_bytes > 0,
-                                 build_pq_bytes, use_opq);
-        if (!use_filters)
-        {   
-            // TODO：这里需要传入文件名，看看可不可以直接传入数据进去
-            // 注意分片构建索引时id从0开始
-            _index.build(shard_base_file.c_str(), shard_base_pts);
-        }
-        else
+    diskann::Index<T> _index(compareMetric, shard_base_dim, shard_base_pts,
+                                std::make_shared<diskann::IndexWriteParameters>(low_degree_params), nullptr,
+                                defaults::NUM_FROZEN_POINTS_STATIC, false, false, false, build_pq_bytes > 0,
+                                build_pq_bytes, use_opq);
+    
+    // _index.build()
+
+    _index.build(shard_base_file.c_str(), shard_base_pts);
+    // 这里保存index,需要改成传回去
+    _index.save(shard_index_file.c_str());
+    // copy universal label file from first shard to the final destination
+    // index, since all shards anyway share the universal label
+    if (p == 0)
+    {
+        std::string shard_universal_label_file = shard_index_file + "_universal_label.txt";
+        if (universal_label != "")
         {
-            // TODO:标签处理在分布式情况下需要同步
-            diskann::extract_shard_labels(label_file, shard_ids_file, shard_labels_file);
-            if (universal_label != "")
-            { //  indicates no universal label
-                LabelT unv_label_as_num = 0;
-                _index.set_universal_label(unv_label_as_num);
-            }
-            _index.build_filtered_index(shard_base_file.c_str(), shard_labels_file, shard_base_pts);
+            copy_file(shard_universal_label_file, final_index_universal_label_file);
         }
-        // 这里保存index,需要改成传回去
-        _index.save(shard_index_file.c_str());
-        // copy universal label file from first shard to the final destination
-        // index, since all shards anyway share the universal label
-        if (p == 0)
-        {
-            std::string shard_universal_label_file = shard_index_file + "_universal_label.txt";
-            if (universal_label != "")
-            {
-                copy_file(shard_universal_label_file, final_index_universal_label_file);
-            }
-        }
+    }
 
-        std::remove(shard_base_file.c_str());
+    std::remove(shard_base_file.c_str());
     // }
     diskann::cout << timer.elapsed_seconds_for_step("building indices on shards") << std::endl;
     // 进程同步等待合并
@@ -1379,6 +1365,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
             }
         }
     }
+    // -----------------------------------------------timer start
     auto s = std::chrono::high_resolution_clock::now();
 
     size_t points_num, dim;
