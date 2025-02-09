@@ -254,11 +254,11 @@ int merge_shards(const std::string &vamana_prefix, const std::string &vamana_suf
     std::vector<std::string> vamana_names(nshards); // merged_index_prefix + "_subshard-" + shard_id + "_mem.index"应该是每个分片的索引文件
     // TODO：作为参数传入
     // std::vector<std::vector<uint32_t>> idmaps(nshards);
-    // for (uint64_t shard = 0; shard < nshards; shard++)
-    // {
-    //     vamana_names[shard] = vamana_prefix + std::to_string(shard) + vamana_suffix;
+    for (uint64_t shard = 0; shard < nshards; shard++)
+    {
+        vamana_names[shard] = vamana_prefix + std::to_string(shard) + vamana_suffix;
     //     read_idmap(idmaps_prefix + std::to_string(shard) + idmaps_suffix, idmaps[shard]);
-    // }
+    }
 
     // find max node id
     size_t nnodes = 0;
