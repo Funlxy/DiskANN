@@ -25,6 +25,8 @@ bool generate_pq(const std::string &data_path, const std::string &index_prefix_p
     size_t train_size, train_dim;
     float *train_data;
     if(rank==0) gen_random_slice<T>(data_path, sampling_rate, train_data, train_size, train_dim);
+    MPI_Bcast(&train_dim, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&train_size, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
     std::cout << "For computing pivots, loaded sample data of size " << train_size << std::endl;
 
     if (opq)
