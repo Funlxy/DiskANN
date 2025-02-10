@@ -1331,6 +1331,8 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
             }
         }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
+    diskann::cout << "finish preprocess\n";
     // -----------------------------------------------timer start
     auto s = std::chrono::high_resolution_clock::now();
 
@@ -1363,6 +1365,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     diskann::cout << "Compressing " << dim << "-dimensional data into " << num_pq_chunks << " bytes per vector."
                 << std::endl;
 
+    MPI_Barrier(MPI_COMM_WORLD);
 
     generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
                         num_pq_chunks, use_opq, codebook_prefix);
