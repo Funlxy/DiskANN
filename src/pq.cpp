@@ -1375,7 +1375,7 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
 
         if (!use_opq)
         {
-            generate_pq_pivots_mpi(train_data, train_size, (uint32_t)train_dim, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks,
+            generate_pq_pivots(train_data, train_size, (uint32_t)train_dim, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks,
                                NUM_KMEANS_REPS_PQ, pq_pivots_path, make_zero_mean);
         }
         else
