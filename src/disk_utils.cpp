@@ -1369,33 +1369,19 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     if(rank==0)diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
     MPI_Barrier(MPI_COMM_WORLD);
 
+    timer.reset();
 
-    
-    if(rank != 0){
-        diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
+    diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
                                             indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
                                             build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
                                             labels_to_medoids_path, universal_label, Lf);
-        diskann::cout << "---------------------------\n";
-        diskann::cout << "rank: " << rank <<  "return\n";
-        diskann::cout << "---------------------------\n";    }
-    else {
-    // Gopal. Splitting diskann_dll into separate DLLs for search and build.
-    // This code should only be available in the "build" DLL.
-    #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
-        MallocExtension::instance()->ReleaseFreeMemory();
-    #endif
-        // Whether it is cosine or inner product, we still L2 metric due to the pre-processing.
-        timer.reset();
-        // int signal = 1;
-        // MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-        diskann::build_merged_vamana_index<T, LabelT>(data_file_to_use.c_str(), diskann::Metric::L2, L, R, p_val,
-                                                    indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
-                                                    build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
-                                                    labels_to_medoids_path, universal_label, Lf);
-        diskann::cout << timer.elapsed_seconds_for_step("building merged vamana index") << std::endl;
-
+    diskann::cout << timer.elapsed_seconds_for_step("building merged vamana index") << std::endl;
+    diskann::cout << "---------------------------\n";
+    diskann::cout << "rank: " << rank <<  "return\n";
+    diskann::cout << "---------------------------\n";
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0){
         timer.reset();
         if (!use_disk_pq)
         {
