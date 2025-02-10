@@ -604,6 +604,7 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
     //             MPI_SUM, 0, MPI_COMM_WORLD);
     // }
     // 计算recvcounts和displs数组
+    MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
         std::vector<int> recvcounts(size);
         std::vector<int> displs(size);
@@ -1394,6 +1395,8 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
     {
         diskann::cout << "Skip Training with predefined pivots in: " << pq_pivots_path << std::endl;
     }
+    MPI_Barrier(MPI_COMM_WORLD);
+
     if (rank == 0 ) generate_pq_data_from_pivots<T>(data_file_to_use, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks, pq_pivots_path,
                                     pq_compressed_vectors_path, use_opq);
     MPI_Barrier(MPI_COMM_WORLD);
