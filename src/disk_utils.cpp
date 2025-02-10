@@ -1335,6 +1335,37 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     Timer timer;
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
     const double p_val = ((double)MAX_PQ_TRAINING_SET_SIZE / (double)points_num);
+
+    // if (use_disk_pq)
+    // {
+    //     generate_disk_quantized_data<T>(data_file_to_use, disk_pq_pivots_path, disk_pq_compressed_vectors_path,
+    //                                     compareMetric, p_val, disk_pq_dims);
+    // }
+    // 每个向量多少个字节,一般来说1chunk就是1字节，所以多少字节就是多少chunk
+    size_t num_pq_chunks = (size_t)(std::floor)(uint64_t(final_index_ram_limit / points_num));
+
+    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > MAX_PQ_CHUNKS ? MAX_PQ_CHUNKS : num_pq_chunks;
+
+    if (param_list.size() >= 9 && atoi(param_list[8].c_str()) <= MAX_PQ_CHUNKS && atoi(param_list[8].c_str()) > 0)
+    {
+        std::cout << "Use quantized dimension (QD) to overwrite derived quantized "
+                    "dimension from search_DRAM_budget (B)"
+                << std::endl;
+        num_pq_chunks = atoi(param_list[8].c_str());
+    }
+
+    diskann::cout << "Compressing " << dim << "-dimensional data into " << num_pq_chunks << " bytes per vector."
+                << std::endl;
+
+    if(rank==0)generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
+                            num_pq_chunks, use_opq, codebook_prefix);
+    diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
+    MPI_Barrier(MPI_COMM_WORLD);
+
+
+    
     if(rank != 0){
         // int signal = 0;
         // MPI_Bcast(&signal, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -1347,33 +1378,6 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
         // }
     }
     else {
-        if (use_disk_pq)
-        {
-            generate_disk_quantized_data<T>(data_file_to_use, disk_pq_pivots_path, disk_pq_compressed_vectors_path,
-                                            compareMetric, p_val, disk_pq_dims);
-        }
-        // 每个向量多少个字节,一般来说1chunk就是1字节，所以多少字节就是多少chunk
-        size_t num_pq_chunks = (size_t)(std::floor)(uint64_t(final_index_ram_limit / points_num));
-
-        num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-        num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-        num_pq_chunks = num_pq_chunks > MAX_PQ_CHUNKS ? MAX_PQ_CHUNKS : num_pq_chunks;
-
-        if (param_list.size() >= 9 && atoi(param_list[8].c_str()) <= MAX_PQ_CHUNKS && atoi(param_list[8].c_str()) > 0)
-        {
-            std::cout << "Use quantized dimension (QD) to overwrite derived quantized "
-                        "dimension from search_DRAM_budget (B)"
-                    << std::endl;
-            num_pq_chunks = atoi(param_list[8].c_str());
-        }
-
-        diskann::cout << "Compressing " << dim << "-dimensional data into " << num_pq_chunks << " bytes per vector."
-                    << std::endl;
-
-        generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
-                                num_pq_chunks, use_opq, codebook_prefix);
-        diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
-
     // Gopal. Splitting diskann_dll into separate DLLs for search and build.
     // This code should only be available in the "build" DLL.
     #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)

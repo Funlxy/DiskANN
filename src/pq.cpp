@@ -432,39 +432,37 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
     std::unique_ptr<float[]> train_data = std::make_unique<float[]>(num_train * dim);
     if (rank==0) std::memcpy(train_data.get(), passed_train_data, num_train * dim * sizeof(float));
     // 广播训练数据到所有进程
-    MPI_Bcast(train_data.get(), num_train * dim, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    diskann::cout << "finish train_data\n";
-
     // Calculate centroid and center the training data
     std::unique_ptr<float[]> centroid = std::make_unique<float[]>(dim);
     for (uint64_t d = 0; d < dim; d++)
     {
         centroid[d] = 0;
     }
-    // if (make_zero_mean)
-    // { // If we use L2 distance, there is an option to
-    //   // translate all vectors to make them centered and
-    //   // then compute PQ. This needs to be set to false
-    //   // when using PQ for MIPS as such translations dont
-    //   // preserve inner products.
-    //     for (uint64_t d = 0; d < dim; d++)
-    //     {
-    //         for (uint64_t p = 0; p < num_train; p++)
-    //         {
-    //             centroid[d] += train_data[p * dim + d];
-    //         }
-    //         centroid[d] /= num_train;
-    //     }
+    if (rank == 0 && make_zero_mean)
+    { // If we use L2 distance, there is an option to
+      // translate all vectors to make them centered and
+      // then compute PQ. This needs to be set to false
+      // when using PQ for MIPS as such translations dont
+      // preserve inner products.
+        for (uint64_t d = 0; d < dim; d++)
+        {
+            for (uint64_t p = 0; p < num_train; p++)
+            {
+                centroid[d] += train_data[p * dim + d];
+            }
+            centroid[d] /= num_train;
+        }
 
-    //     for (uint64_t d = 0; d < dim; d++)
-    //     {
-    //         for (uint64_t p = 0; p < num_train; p++)
-    //         {
-    //             train_data[p * dim + d] -= centroid[d];
-    //         }
-    //     }
-    // }
-
+        for (uint64_t d = 0; d < dim; d++)
+        {
+            for (uint64_t p = 0; p < num_train; p++)
+            {
+                train_data[p * dim + d] -= centroid[d];
+            }
+        }
+    }
+    MPI_Bcast(train_data.get(), num_train * dim, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    diskann::cout << "finish train_data\n";
     std::vector<uint32_t> chunk_offsets;
     // 最小维度数
     size_t low_val = (size_t)std::floor((double)dim / (double)num_pq_chunks);
@@ -516,9 +514,9 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
                 chunk_offsets.push_back(chunk_offsets[b - 1] + (uint32_t)bin_to_dims[b - 1].size());
         }
         chunk_offsets.push_back(dim);
-        for(int i = 0 ; i < chunk_offsets.size() ; i ++) {
-            diskann::cout << i << " " << chunk_offsets[i] << std::endl;
-        }
+        // for(int i = 0 ; i < chunk_offsets.size() ; i ++) {
+        //     diskann::cout << i << " " << chunk_offsets[i] << std::endl;
+        // }
     }
     // 广播chunk_offsets到所有进程
     if (rank == 0) {
@@ -589,7 +587,7 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
                 cur_pivot_data.get() + j * cur_chunk_size,
                 cur_chunk_size * sizeof(float));
         }
-        std::cout << local_offset << " " << chunk_offsets[i] - chunk_offsets[start_chunk] << std::endl;
+        // std::cout << local_offset << " " << chunk_offsets[i] - chunk_offsets[start_chunk] << std::endl;
         local_offset += cur_chunk_size;
         
     }
@@ -1360,6 +1358,9 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
 {
     size_t train_size, train_dim;
     float *train_data;
+    // int rank, size;
+    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    // MPI_Comm_size(MPI_COMM_WORLD, &size);
     if (!file_exists(codebook_prefix))
     {
         // instantiates train_data with random sample updates train_size
