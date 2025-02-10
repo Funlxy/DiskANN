@@ -1364,9 +1364,9 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
     {
         // instantiates train_data with random sample updates train_size
         if(rank==0)gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size, train_dim);
-        diskann::cout << "Training data with " << train_size << " samples loaded." << std::endl;
         MPI_Bcast(&train_dim, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
         MPI_Bcast(&train_size, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
+        diskann::cout << "Training data with " << train_size << " samples loaded." << std::endl;
         bool make_zero_mean = true;
         if (compareMetric == diskann::Metric::INNER_PRODUCT)
             make_zero_mean = false;
