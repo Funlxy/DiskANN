@@ -98,8 +98,9 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     DISKANN_DLLEXPORT void build(const char *filename, const size_t num_points_to_load, const char *tag_filename);
 
     // Batch build from a data array, which must pad vectors to aligned_dim
-    DISKANN_DLLEXPORT void build(const T *data, const size_t num_points_to_load, const std::vector<TagT> &tags);
-
+    DISKANN_DLLEXPORT void build(const T *data, const size_t num_points_to_load, std::vector<TagT> &tags);
+    DISKANN_DLLEXPORT void build(const T *data, const size_t num_points_to_load, const std::vector<TagT> &tags = std::vector<TagT>());
+    // DISKANN_DLLEXPORT void build_from_data(const T *data, const size_t num_points_to_load, const std::vector<TagT> &tags);
     // Based on filter params builds a filtered or unfiltered index
     DISKANN_DLLEXPORT void build(const std::string &data_file, const size_t num_points_to_load,
                                  IndexFilterParams &filter_params);

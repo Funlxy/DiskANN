@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
+#include <cstdint>
 #include <omp.h>
 
 #include <type_traits>
@@ -1599,7 +1600,30 @@ void Index<T, TagT, LabelT>::build(const T *data, const size_t num_points_to_loa
 
     build_with_data_populated(tags);
 }
+// template <typename T, typename TagT, typename LabelT>
+// void Index<T, TagT, LabelT>::build_from_data(const T *data, const size_t num_points_to_load, const std::vector<TagT> &tags)
+// {
+//     if (num_points_to_load == 0)
+//     {
+//         throw ANNException("Do not call build with 0 points", -1, __FUNCSIG__, __FILE__, __LINE__);
+//     }
+//     if (_pq_dist)
+//     {
+//         throw ANNException("ERROR: DO not use this build interface with PQ distance", -1, __FUNCSIG__, __FILE__,
+//                            __LINE__);
+//     }
 
+//     std::unique_lock<std::shared_timed_mutex> ul(_update_lock);
+
+//     {
+//         std::unique_lock<std::shared_timed_mutex> tl(_tag_lock);
+//         _nd = num_points_to_load;
+
+//         _data_store->populate_data(data, (location_t)num_points_to_load);
+//     }
+
+//     build_with_data_populated(tags);
+// }
 template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::build(const char *filename, const size_t num_points_to_load, const std::vector<TagT> &tags)
 {
@@ -3481,5 +3505,21 @@ template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t,
 template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t, uint16_t>::search_with_filters<
     uint32_t>(const int8_t *query, const uint16_t &filter_label, const size_t K, const uint32_t L, uint32_t *indices,
               float *distances);
+
+
+
+// template DISKANN_DLLEXPORT void Index<float, uint64_t, uint32_t>::build_from_data(const float *data, const size_t num_points_to_load, const std::vector<uint64_t> &tags);
+// template DISKANN_DLLEXPORT void Index<uint8_t, uint64_t, uint32_t>::build_from_data(const uint8_t *data, const size_t num_points_to_load, const std::vector<uint64_t> &tags);
+// template DISKANN_DLLEXPORT void Index<int8_t, uint64_t, uint32_t>::build_from_data(const int8_t *data, const size_t num_points_to_load, const std::vector<uint64_t> &tags);
+// template DISKANN_DLLEXPORT void Index<float, uint32_t, uint32_t>::build_from_data(const float *data, const size_t num_points_to_load, const std::vector<uint64_t> &tags);
+// template DISKANN_DLLEXPORT void Index<uint8_t, uint32_t, uint32_t>::build_from_data(const uint8_t *data, const size_t num_points_to_load, const std::vector<uint64_t> &tags);
+// template DISKANN_DLLEXPORT void Index<int8_t, uint32_t, uint32_t>::build_from_data(const int8_t *data, const size_t num_points_to_load, const std::vector<uint64_t> &tags);
+
+// template DISKANN_DLLEXPORT void Index<float, uint64_t, uint16_t>::build_from_data(const float *data, const size_t num_points_to_load, const std::vector<uint16_t> &tags);
+// template DISKANN_DLLEXPORT void Index<uint8_t, uint64_t, uint16_t>::build_from_data(const uint8_t *data, const size_t num_points_to_load, const std::vector<uint16_t> &tags);
+// template DISKANN_DLLEXPORT void Index<int8_t, uint64_t, uint16_t>::build_from_data(const int8_t *data, const size_t num_points_to_load, const std::vector<uint16_t> &tags);
+// template DISKANN_DLLEXPORT void Index<float, uint32_t, uint16_t>::build_from_data(const float *data, const size_t num_points_to_load, const std::vector<uint16_t> &tags);
+// template DISKANN_DLLEXPORT void Index<uint8_t, uint32_t, uint16_t>::build_from_data(const uint8_t *data, const size_t num_points_to_load, const std::vector<uint16_t> &tags);
+// template DISKANN_DLLEXPORT void Index<int8_t, uint32_t, uint16_t>::build_from_data(const int8_t *data, const size_t num_points_to_load, const std::vector<uint16_t> &tags);
 
 } // namespace diskann
