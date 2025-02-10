@@ -433,7 +433,7 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
     if (rank==0) std::memcpy(train_data.get(), passed_train_data, num_train * dim * sizeof(float));
     // 广播训练数据到所有进程
     MPI_Bcast(train_data.get(), num_train * dim, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
+    diskann::cout << "finish train_data\n";
 
     // Calculate centroid and center the training data
     std::unique_ptr<float[]> centroid = std::make_unique<float[]>(dim);
@@ -528,6 +528,7 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
         chunk_offsets.resize(offsets_size);
         MPI_Bcast(chunk_offsets.data(), offsets_size, MPI_UINT32_T, 0, MPI_COMM_WORLD);
     }
+    diskann::cout << "finish chunk_offsets" << std::endl;
     // 分配全局质心数据内存
     std::unique_ptr<float[]> full_pivot_data;
     if (rank == 0) {
