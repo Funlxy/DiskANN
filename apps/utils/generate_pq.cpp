@@ -47,6 +47,7 @@ bool generate_pq(const std::string &data_path, const std::string &index_prefix_p
                                              pq_pivots_path, pq_compressed_vectors_path, opq);
 
     delete[] train_data;
+    std::cout << "finish\n";
     MPI_Finalize();
     return 0;
 }

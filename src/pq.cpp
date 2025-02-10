@@ -516,6 +516,9 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
                 chunk_offsets.push_back(chunk_offsets[b - 1] + (uint32_t)bin_to_dims[b - 1].size());
         }
         chunk_offsets.push_back(dim);
+        for(int i = 0 ; i < chunk_offsets.size() ; i ++) {
+            diskann::cout << i << " " << chunk_offsets[i] << std::endl;
+        }
     }
     // 广播chunk_offsets到所有进程
     if (rank == 0) {
@@ -534,7 +537,7 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
     if (rank == 0) {
         full_pivot_data.reset(new float[num_centers * dim]);
     }
-
+    
 
     // 计算每个进程处理的分块范围
     size_t chunks_per_proc = num_pq_chunks / size;
@@ -542,6 +545,9 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
     size_t end_chunk = (rank == size-1) ? num_pq_chunks : (rank + 1) * chunks_per_proc;
     // 处理分配给当前进程的分块
     std::vector<float> local_pivot_data(num_centers * dim, 0);
+    // std::vector<float> local_pivot_data(num_centers*(chunk_offsets[end_chunk]-chunk_offsets[start_chunk]),0)
+    std::cout << rank << " " << start_chunk << " " << end_chunk << std::endl;
+    std::cout << chunk_offsets[end_chunk] - chunk_offsets[start_chunk] << std::endl;
     for (int i = start_chunk ; i < end_chunk ; i ++) {
         size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
         if(cur_chunk_size==0)
@@ -558,7 +564,8 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
             << chunk_offsets[i + 1] << ")" << std::endl;
         #pragma omp parallel for schedule(static, 65536)
         for (int64_t j = 0; j < (int64_t)num_train; j++) {
-            if(j==0) diskann::cout << rank << " " << omp_get_num_threads() << std::endl;
+            // 遍历每个向量,拷贝进来
+            // if(j==0) diskann::cout << rank << " " << omp_get_num_threads() << std::endl;
             std::memcpy(cur_data.get() + j * cur_chunk_size,
                         train_data.get() + j * dim + chunk_offsets[i],
                         cur_chunk_size * sizeof(float));
