@@ -822,6 +822,8 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
     MPI_Barrier(MPI_COMM_WORLD);
     diskann::cout << "---------------------------\n";
     diskann::cout << "rank: " << world_rank <<  "merge finish\n";
+    diskann::cout << "---------------------------\n";
+
     return 0;
 }
 
@@ -1373,8 +1375,9 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
                                             indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
                                             build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
                                             labels_to_medoids_path, universal_label, Lf);
-        diskann::cout << "rank: " << rank << " here\n";
-    }
+        diskann::cout << "---------------------------\n";
+        diskann::cout << "rank: " << rank <<  "return\n";
+        diskann::cout << "---------------------------\n";    }
     else {
     // Gopal. Splitting diskann_dll into separate DLLs for search and build.
     // This code should only be available in the "build" DLL.
