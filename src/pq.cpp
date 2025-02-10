@@ -543,11 +543,12 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
     size_t chunks_per_proc = num_pq_chunks / size;
     size_t start_chunk = rank * chunks_per_proc;
     size_t end_chunk = (rank == size-1) ? num_pq_chunks : (rank + 1) * chunks_per_proc;
+    size_t total_dims = chunk_offsets[end_chunk] - chunk_offsets[start_chunk];
     // 处理分配给当前进程的分块
-    std::vector<float> local_pivot_data(num_centers * dim, 0);
-    // std::vector<float> local_pivot_data(num_centers*(chunk_offsets[end_chunk]-chunk_offsets[start_chunk]),0)
-    std::cout << rank << " " << start_chunk << " " << end_chunk << std::endl;
-    std::cout << chunk_offsets[end_chunk] - chunk_offsets[start_chunk] << std::endl;
+    // std::vector<float> local_pivot_data(num_centers * dim, 0);
+    std::vector<float> local_pivot_data(num_centers*total_dims,0);
+    diskann::cout << "rank:" << rank << " start_chunk:" << start_chunk << " end_chunk:" << end_chunk << " total_dims:" << total_dims << std::endl;
+    size_t local_offset = 0;
     for (int i = start_chunk ; i < end_chunk ; i ++) {
         size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
         if(cur_chunk_size==0)
@@ -581,45 +582,81 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
 
         // 将结果复制到local_pivot_data
         for (uint64_t j = 0; j < num_centers; j++) {
-            std::memcpy(&local_pivot_data[j * dim + chunk_offsets[i]],
-                       cur_pivot_data.get() + j * cur_chunk_size,
-                       cur_chunk_size * sizeof(float));
+            // std::memcpy(&local_pivot_data[j * dim + chunk_offsets[i]],
+            //            cur_pivot_data.get() + j * cur_chunk_size,
+            //            cur_chunk_size * sizeof(float));
+            std::memcpy(&local_pivot_data[j * total_dims + local_offset],
+                cur_pivot_data.get() + j * cur_chunk_size,
+                cur_chunk_size * sizeof(float));
         }
+        std::cout << local_offset << " " << chunk_offsets[i] - chunk_offsets[start_chunk] << std::endl;
+        local_offset += cur_chunk_size;
+        
     }
     // 使用MPI_Reduce收集所有进程的结果
-    if (rank == 0) {
-        MPI_Reduce(MPI_IN_PLACE, full_pivot_data.get(),
-                num_centers * dim, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
+    // if (rank == 0) {
+    //     MPI_Reduce(MPI_IN_PLACE, full_pivot_data.get(),
+    //             num_centers * dim, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
         
-        // 保存结果
-        std::vector<size_t> cumul_bytes(4, 0);
-        cumul_bytes[0] = METADATA_SIZE;
-        cumul_bytes[1] = cumul_bytes[0] + 
-            diskann::save_bin<float>(pq_pivots_path.c_str(),
-                                full_pivot_data.get(),
-                                (size_t)num_centers, dim,
-                                cumul_bytes[0]);
-        cumul_bytes[2] = cumul_bytes[1] +
-            diskann::save_bin<float>(pq_pivots_path.c_str(),
-                                centroid.get(),
-                                (size_t)dim, 1,
-                                cumul_bytes[1]);
-        cumul_bytes[3] = cumul_bytes[2] + 
-            diskann::save_bin<uint32_t>(pq_pivots_path.c_str(),
-                                    chunk_offsets.data(),
-                                    chunk_offsets.size(), 1,
-                                    cumul_bytes[2]);
-        diskann::save_bin<size_t>(pq_pivots_path.c_str(),
-                                cumul_bytes.data(),
-                                cumul_bytes.size(), 1, 0);
+    // } else {
+    //     MPI_Reduce(local_pivot_data.data(), nullptr,
+    //             num_centers * dim, MPI_FLOAT,
+    //             MPI_SUM, 0, MPI_COMM_WORLD);
+    // }
+    // 计算recvcounts和displs数组
+    if (rank == 0) {
+        std::vector<int> recvcounts(size);
+        std::vector<int> displs(size);
+        for (int i = 0; i < size; i++) {
+            size_t proc_start = i * chunks_per_proc;
+            size_t proc_end = (i == size-1) ? num_pq_chunks : (i + 1) * chunks_per_proc;
+            
+            // 计算当前进程负责的所有维度总数
+            size_t proc_dims = chunk_offsets[proc_end] - chunk_offsets[proc_start];
+            
+            // 每个进程需要发送num_centers * proc_dims个float
+            recvcounts[i] = num_centers * proc_dims;
+            
+            // 在目标数组中的偏移位置
+            displs[i] = num_centers * chunk_offsets[proc_start];
+        }
 
-        diskann::cout << "Saved pq pivot data to " << pq_pivots_path 
-                    << " of size " << cumul_bytes[cumul_bytes.size() - 1]
-                    << "B." << std::endl;
+        // 使用MPI_Gatherv收集数据
+        MPI_Gatherv(local_pivot_data.data(), num_centers * total_dims, MPI_FLOAT,
+                    full_pivot_data.get(), recvcounts.data(), displs.data(),
+                    MPI_FLOAT, 0, MPI_COMM_WORLD);
     } else {
-        MPI_Reduce(local_pivot_data.data(), nullptr,
-                num_centers * dim, MPI_FLOAT,
-                MPI_SUM, 0, MPI_COMM_WORLD);
+        // 其他进程只需要发送数据
+        MPI_Gatherv(local_pivot_data.data(), num_centers * total_dims, MPI_FLOAT,
+                    nullptr, nullptr, nullptr, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    }
+    // 保存结果
+    if (rank == 0) {
+          // 保存结果
+          std::vector<size_t> cumul_bytes(4, 0);
+          cumul_bytes[0] = METADATA_SIZE;
+          cumul_bytes[1] = cumul_bytes[0] + 
+              diskann::save_bin<float>(pq_pivots_path.c_str(),
+                                  full_pivot_data.get(),
+                                  (size_t)num_centers, dim,
+                                  cumul_bytes[0]);
+          cumul_bytes[2] = cumul_bytes[1] +
+              diskann::save_bin<float>(pq_pivots_path.c_str(),
+                                  centroid.get(),
+                                  (size_t)dim, 1,
+                                  cumul_bytes[1]);
+          cumul_bytes[3] = cumul_bytes[2] + 
+              diskann::save_bin<uint32_t>(pq_pivots_path.c_str(),
+                                      chunk_offsets.data(),
+                                      chunk_offsets.size(), 1,
+                                      cumul_bytes[2]);
+          diskann::save_bin<size_t>(pq_pivots_path.c_str(),
+                                  cumul_bytes.data(),
+                                  cumul_bytes.size(), 1, 0);
+  
+          diskann::cout << "Saved pq pivot data to " << pq_pivots_path 
+                      << " of size " << cumul_bytes[cumul_bytes.size() - 1]
+                      << "B." << std::endl;
     }
     return 0;
 }
@@ -761,6 +798,7 @@ int generate_pq_pivots(const float *const passed_train_data, size_t num_train, u
             std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[i], cur_pivot_data.get() + j * cur_chunk_size,
                         cur_chunk_size * sizeof(float));
         }
+        std::cout << std::endl;
     }
 
     std::vector<size_t> cumul_bytes(4, 0);
