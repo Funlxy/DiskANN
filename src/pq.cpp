@@ -554,8 +554,11 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
         std::unique_ptr<uint32_t[]> closest_center = 
             std::make_unique<uint32_t[]>(num_train);
             // 提取当前分块的数据
+        diskann::cout << "rank:" << rank << " Processing chunk " << i << " with dimensions [" << chunk_offsets[i] << ", "
+            << chunk_offsets[i + 1] << ")" << std::endl;
         #pragma omp parallel for schedule(static, 65536)
         for (int64_t j = 0; j < (int64_t)num_train; j++) {
+            if(j==0) diskann::cout << rank << " " << omp_get_num_threads() << std::endl;
             std::memcpy(cur_data.get() + j * cur_chunk_size,
                         train_data.get() + j * dim + chunk_offsets[i],
                         cur_chunk_size * sizeof(float));

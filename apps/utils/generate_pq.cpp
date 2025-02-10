@@ -36,8 +36,12 @@ bool generate_pq(const std::string &data_path, const std::string &index_prefix_p
     }
     else
     {
+        auto s = std::chrono::high_resolution_clock::now();
         diskann::generate_pq_pivots_mpi(train_data, train_size, (uint32_t)train_dim, (uint32_t)num_pq_centers,
                                     (uint32_t)num_pq_chunks, KMEANS_ITERS_FOR_PQ, pq_pivots_path);
+        auto e = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = e - s;
+        diskann::cout << "finish  time: " << diff.count() << std::endl;
     }
     if(rank==0)diskann::generate_pq_data_from_pivots<T>(data_path, (uint32_t)num_pq_centers, (uint32_t)num_pq_chunks,
                                              pq_pivots_path, pq_compressed_vectors_path, opq);
