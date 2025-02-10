@@ -2,7 +2,9 @@
 // Licensed under the MIT license.
 
 #include "mkl.h"
+#include "mpi.h"
 #include <cstddef>
+#include <vector>
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
@@ -628,6 +630,7 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
         MPI_Gatherv(local_pivot_data.data(), num_centers * total_dims, MPI_FLOAT,
                     nullptr, nullptr, nullptr, MPI_FLOAT, 0, MPI_COMM_WORLD);
     }
+    MPI_Barrier(MPI_COMM_WORLD);
     // 保存结果
     if (rank == 0) {
           // 保存结果
@@ -656,6 +659,8 @@ int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_trai
                       << " of size " << cumul_bytes[cumul_bytes.size() - 1]
                       << "B." << std::endl;
     }
+    MPI_Barrier(MPI_COMM_WORLD);
+    // std::vector<typename Tp>
     return 0;
 }
 // given training data in train_data of dimensions num_train * dim, generate
@@ -1375,7 +1380,7 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
 
         if (!use_opq)
         {
-            if(rank==0)generate_pq_pivots(train_data, train_size, (uint32_t)train_dim, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks,
+            generate_pq_pivots_mpi(train_data, train_size, (uint32_t)train_dim, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks,
                                NUM_KMEANS_REPS_PQ, pq_pivots_path, make_zero_mean);
         }
         else
@@ -1391,6 +1396,7 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
     }
     if (rank == 0 ) generate_pq_data_from_pivots<T>(data_file_to_use, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks, pq_pivots_path,
                                     pq_compressed_vectors_path, use_opq);
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 // Instantations of supported templates
