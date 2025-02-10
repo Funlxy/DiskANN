@@ -796,7 +796,6 @@ int generate_pq_pivots(const float *const passed_train_data, size_t num_train, u
             std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[i], cur_pivot_data.get() + j * cur_chunk_size,
                         cur_chunk_size * sizeof(float));
         }
-        std::cout << std::endl;
     }
 
     std::vector<size_t> cumul_bytes(4, 0);
@@ -1358,15 +1357,16 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
 {
     size_t train_size, train_dim;
     float *train_data;
-    // int rank, size;
-    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    // MPI_Comm_size(MPI_COMM_WORLD, &size);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
     if (!file_exists(codebook_prefix))
     {
         // instantiates train_data with random sample updates train_size
-        gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size, train_dim);
+        if(rank==0)gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size, train_dim);
         diskann::cout << "Training data with " << train_size << " samples loaded." << std::endl;
-
+        MPI_Bcast(&train_dim, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&train_size, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
         bool make_zero_mean = true;
         if (compareMetric == diskann::Metric::INNER_PRODUCT)
             make_zero_mean = false;
@@ -1375,7 +1375,7 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
 
         if (!use_opq)
         {
-            generate_pq_pivots(train_data, train_size, (uint32_t)train_dim, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks,
+            generate_pq_pivots_mpi(train_data, train_size, (uint32_t)train_dim, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks,
                                NUM_KMEANS_REPS_PQ, pq_pivots_path, make_zero_mean);
         }
         else
@@ -1389,7 +1389,7 @@ void generate_quantized_data(const std::string &data_file_to_use, const std::str
     {
         diskann::cout << "Skip Training with predefined pivots in: " << pq_pivots_path << std::endl;
     }
-    generate_pq_data_from_pivots<T>(data_file_to_use, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks, pq_pivots_path,
+    if (rank == 0 ) generate_pq_data_from_pivots<T>(data_file_to_use, NUM_PQ_CENTROIDS, (uint32_t)num_pq_chunks, pq_pivots_path,
                                     pq_compressed_vectors_path, use_opq);
 }
 

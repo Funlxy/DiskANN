@@ -785,8 +785,6 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                                 defaults::NUM_FROZEN_POINTS_STATIC, false, false, false, build_pq_bytes > 0,
                                 build_pq_bytes, use_opq);
     
-    // _index.build()
-    diskann::cout << "rank: " << world_rank << " " << omp_get_max_threads() << " " << omp_get_num_threads() << std::endl;
     _index.build(local_data.data(), shard_base_pts);
     // 这里保存index,需要改成传回去
     _index.save(shard_index_file.c_str());
@@ -1359,12 +1357,10 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     diskann::cout << "Compressing " << dim << "-dimensional data into " << num_pq_chunks << " bytes per vector."
                 << std::endl;
 
-    if(rank==0)
-    {
-        generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
-                            num_pq_chunks, use_opq, codebook_prefix);
-        diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
-    }
+
+    generate_quantized_data<T>(data_file_to_use, pq_pivots_path, pq_compressed_vectors_path, compareMetric, p_val,
+                        num_pq_chunks, use_opq, codebook_prefix);
+    if(rank==0)diskann::cout << timer.elapsed_seconds_for_step("generating quantized data") << std::endl;
     MPI_Barrier(MPI_COMM_WORLD);
 
 
