@@ -786,7 +786,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                                 build_pq_bytes, use_opq);
     
     // _index.build()
-
+    diskann::cout << "rank: " << world_rank << " " << omp_get_max_threads() << " " << omp_get_num_threads() << std::endl;
     _index.build(local_data.data(), shard_base_pts);
     // 这里保存index,需要改成传回去
     _index.save(shard_index_file.c_str());
@@ -801,7 +801,7 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
         }
     }
 
-    std::remove(shard_base_file.c_str());
+    // std::remove(shard_base_file.c_str());
     // }
     diskann::cout << timer.elapsed_seconds_for_step("building indices on shards") << std::endl;
     // 进程同步等待合并
