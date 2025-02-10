@@ -5,7 +5,7 @@
 
 #include "utils.h"
 #include "pq_common.h"
-
+#include "mpi.h"
 namespace diskann
 {
 class FixedChunkPQTable
@@ -63,6 +63,9 @@ DISKANN_DLLEXPORT int generate_pq_pivots(const float *const train_data, size_t n
                                          unsigned num_centers, unsigned num_pq_chunks, unsigned max_k_means_reps,
                                          std::string pq_pivots_path, bool make_zero_mean = false);
 
+DISKANN_DLLEXPORT int generate_pq_pivots_mpi(const float *const train_data, size_t num_train, unsigned dim,
+                                         unsigned num_centers, unsigned num_pq_chunks, unsigned max_k_means_reps,
+                                         std::string pq_pivots_path, bool make_zero_mean = false);
 DISKANN_DLLEXPORT int generate_opq_pivots(const float *train_data, size_t num_train, unsigned dim, unsigned num_centers,
                                           unsigned num_pq_chunks, std::string opq_pivots_path,
                                           bool make_zero_mean = false);

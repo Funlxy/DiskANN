@@ -1352,6 +1352,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
             generate_disk_quantized_data<T>(data_file_to_use, disk_pq_pivots_path, disk_pq_compressed_vectors_path,
                                             compareMetric, p_val, disk_pq_dims);
         }
+        // 每个向量多少个字节,一般来说1chunk就是1字节，所以多少字节就是多少chunk
         size_t num_pq_chunks = (size_t)(std::floor)(uint64_t(final_index_ram_limit / points_num));
 
         num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;

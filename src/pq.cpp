@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include "mkl.h"
+#include <cstddef>
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
@@ -402,7 +403,215 @@ int generate_pq_pivots_simplified(const float *train_data, size_t num_train, siz
 
     return 0;
 }
+int generate_pq_pivots_mpi(const float *const passed_train_data, size_t num_train, uint32_t dim, uint32_t num_centers,
+                       uint32_t num_pq_chunks, uint32_t max_k_means_reps, std::string pq_pivots_path,
+                       bool make_zero_mean)
+{
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    if (num_pq_chunks > dim)
+    {
+        diskann::cout << " Error: number of chunks more than dimension" << std::endl;
+        return -1;
+    }
 
+
+    // // 如果存在质心就不需要
+    // if (file_exists(pq_pivots_path))
+    // {
+    //     size_t file_dim, file_num_centers;
+    //     diskann::load_bin<float>(pq_pivots_path, full_pivot_data, file_num_centers, file_dim, METADATA_SIZE);
+    //     if (file_dim == dim && file_num_centers == num_centers)
+    //     {
+    //         diskann::cout << "PQ pivot file exists. Not generating again" << std::endl;
+    //         return -1;
+    //     }
+    // }
+
+    std::unique_ptr<float[]> train_data = std::make_unique<float[]>(num_train * dim);
+    if (rank==0) std::memcpy(train_data.get(), passed_train_data, num_train * dim * sizeof(float));
+    // 广播训练数据到所有进程
+    MPI_Bcast(train_data.get(), num_train * dim, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+
+    // Calculate centroid and center the training data
+    std::unique_ptr<float[]> centroid = std::make_unique<float[]>(dim);
+    for (uint64_t d = 0; d < dim; d++)
+    {
+        centroid[d] = 0;
+    }
+    // if (make_zero_mean)
+    // { // If we use L2 distance, there is an option to
+    //   // translate all vectors to make them centered and
+    //   // then compute PQ. This needs to be set to false
+    //   // when using PQ for MIPS as such translations dont
+    //   // preserve inner products.
+    //     for (uint64_t d = 0; d < dim; d++)
+    //     {
+    //         for (uint64_t p = 0; p < num_train; p++)
+    //         {
+    //             centroid[d] += train_data[p * dim + d];
+    //         }
+    //         centroid[d] /= num_train;
+    //     }
+
+    //     for (uint64_t d = 0; d < dim; d++)
+    //     {
+    //         for (uint64_t p = 0; p < num_train; p++)
+    //         {
+    //             train_data[p * dim + d] -= centroid[d];
+    //         }
+    //     }
+    // }
+
+    std::vector<uint32_t> chunk_offsets;
+    // 最小维度数
+    size_t low_val = (size_t)std::floor((double)dim / (double)num_pq_chunks);
+    // 最大维度数
+    size_t high_val = (size_t)std::ceil((double)dim / (double)num_pq_chunks);
+    // 意味着有多少个chunk可以分配到最大维度数
+    size_t max_num_high = dim - (low_val * num_pq_chunks);
+
+    if (rank==0) {
+        // Root进程进行维度分配
+        size_t cur_num_high = 0;
+        size_t cur_bin_threshold = high_val;
+        // 存储每个分块包含哪些维度
+        std::vector<std::vector<uint32_t>> bin_to_dims(num_pq_chunks);
+        // 记录每个维度被分配到哪个分块
+        tsl::robin_map<uint32_t, uint32_t> dim_to_bin;
+        // 记录每个分块的当前负载
+        std::vector<float> bin_loads(num_pq_chunks, 0);
+        for (uint32_t d = 0; d < dim; d++)
+        {
+            // 如果该维度已被分配则跳过
+            if (dim_to_bin.find(d) != dim_to_bin.end())
+                continue;
+            // 找到负载最小且为达到阈值的分块
+            auto cur_best = num_pq_chunks + 1;
+            float cur_best_load = std::numeric_limits<float>::max();
+            for (uint32_t b = 0; b < num_pq_chunks; b++)
+            {
+                if (bin_loads[b] < cur_best_load && bin_to_dims[b].size() < cur_bin_threshold)
+                {
+                    cur_best = b;
+                    cur_best_load = bin_loads[b];
+                }
+            }
+            bin_to_dims[cur_best].push_back(d);
+            if (bin_to_dims[cur_best].size() == high_val)
+            {
+                cur_num_high++;
+                if (cur_num_high == max_num_high)
+                    cur_bin_threshold = low_val;
+            }
+        }
+        chunk_offsets.clear();
+        chunk_offsets.push_back(0);
+        // 记录每个chunk的起始维度
+        for (uint32_t b = 0; b < num_pq_chunks; b++)
+        {
+            if (b > 0)
+                chunk_offsets.push_back(chunk_offsets[b - 1] + (uint32_t)bin_to_dims[b - 1].size());
+        }
+        chunk_offsets.push_back(dim);
+    }
+    // 广播chunk_offsets到所有进程
+    if (rank == 0) {
+        uint32_t offsets_size = chunk_offsets.size();
+        MPI_Bcast(&offsets_size, 1, MPI_UINT32_T, 0, MPI_COMM_WORLD);
+        MPI_Bcast(chunk_offsets.data(), offsets_size, MPI_UINT32_T, 0, MPI_COMM_WORLD);
+    } else {
+        uint32_t offsets_size;
+        MPI_Bcast(&offsets_size, 1, MPI_UINT32_T, 0, MPI_COMM_WORLD);
+        chunk_offsets.resize(offsets_size);
+        MPI_Bcast(chunk_offsets.data(), offsets_size, MPI_UINT32_T, 0, MPI_COMM_WORLD);
+    }
+    // 分配全局质心数据内存
+    std::unique_ptr<float[]> full_pivot_data;
+    if (rank == 0) {
+        full_pivot_data.reset(new float[num_centers * dim]);
+    }
+
+
+    // 计算每个进程处理的分块范围
+    size_t chunks_per_proc = num_pq_chunks / size;
+    size_t start_chunk = rank * chunks_per_proc;
+    size_t end_chunk = (rank == size-1) ? num_pq_chunks : (rank + 1) * chunks_per_proc;
+    // 处理分配给当前进程的分块
+    std::vector<float> local_pivot_data(num_centers * dim, 0);
+    for (int i = start_chunk ; i < end_chunk ; i ++) {
+        size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
+        if(cur_chunk_size==0)
+            continue;
+            // 为当前分块分配内存
+        std::unique_ptr<float[]> cur_pivot_data = 
+            std::make_unique<float[]>(num_centers * cur_chunk_size);
+        std::unique_ptr<float[]> cur_data = 
+            std::make_unique<float[]>(num_train * cur_chunk_size);
+        std::unique_ptr<uint32_t[]> closest_center = 
+            std::make_unique<uint32_t[]>(num_train);
+            // 提取当前分块的数据
+        #pragma omp parallel for schedule(static, 65536)
+        for (int64_t j = 0; j < (int64_t)num_train; j++) {
+            std::memcpy(cur_data.get() + j * cur_chunk_size,
+                        train_data.get() + j * dim + chunk_offsets[i],
+                        cur_chunk_size * sizeof(float));
+        }
+         // 运行k-means
+        kmeans::kmeanspp_selecting_pivots(cur_data.get(), num_train,
+                                        cur_chunk_size, cur_pivot_data.get(),
+                                        num_centers);
+
+        kmeans::run_lloyds(cur_data.get(), num_train, cur_chunk_size,
+                          cur_pivot_data.get(), num_centers,
+                          max_k_means_reps, NULL, closest_center.get());
+
+        // 将结果复制到local_pivot_data
+        for (uint64_t j = 0; j < num_centers; j++) {
+            std::memcpy(&local_pivot_data[j * dim + chunk_offsets[i]],
+                       cur_pivot_data.get() + j * cur_chunk_size,
+                       cur_chunk_size * sizeof(float));
+        }
+    }
+    // 使用MPI_Reduce收集所有进程的结果
+    if (rank == 0) {
+        MPI_Reduce(MPI_IN_PLACE, full_pivot_data.get(),
+                num_centers * dim, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
+        
+        // 保存结果
+        std::vector<size_t> cumul_bytes(4, 0);
+        cumul_bytes[0] = METADATA_SIZE;
+        cumul_bytes[1] = cumul_bytes[0] + 
+            diskann::save_bin<float>(pq_pivots_path.c_str(),
+                                full_pivot_data.get(),
+                                (size_t)num_centers, dim,
+                                cumul_bytes[0]);
+        cumul_bytes[2] = cumul_bytes[1] +
+            diskann::save_bin<float>(pq_pivots_path.c_str(),
+                                centroid.get(),
+                                (size_t)dim, 1,
+                                cumul_bytes[1]);
+        cumul_bytes[3] = cumul_bytes[2] + 
+            diskann::save_bin<uint32_t>(pq_pivots_path.c_str(),
+                                    chunk_offsets.data(),
+                                    chunk_offsets.size(), 1,
+                                    cumul_bytes[2]);
+        diskann::save_bin<size_t>(pq_pivots_path.c_str(),
+                                cumul_bytes.data(),
+                                cumul_bytes.size(), 1, 0);
+
+        diskann::cout << "Saved pq pivot data to " << pq_pivots_path 
+                    << " of size " << cumul_bytes[cumul_bytes.size() - 1]
+                    << "B." << std::endl;
+    } else {
+        MPI_Reduce(local_pivot_data.data(), nullptr,
+                num_centers * dim, MPI_FLOAT,
+                MPI_SUM, 0, MPI_COMM_WORLD);
+    }
+    return 0;
+}
 // given training data in train_data of dimensions num_train * dim, generate
 // PQ pivots using k-means algorithm to partition the co-ordinates into
 // num_pq_chunks (if it divides dimension, else rounded) chunks, and runs
@@ -558,6 +767,10 @@ int generate_pq_pivots(const float *const passed_train_data, size_t num_train, u
 
     return 0;
 }
+
+
+
+
 
 int generate_opq_pivots(const float *passed_train_data, size_t num_train, uint32_t dim, uint32_t num_centers,
                         uint32_t num_pq_chunks, std::string opq_pivots_path, bool make_zero_mean)

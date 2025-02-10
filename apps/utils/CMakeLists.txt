@@ -57,7 +57,7 @@ target_link_libraries(compute_groundtruth_for_filters ${PROJECT_NAME} ${DISKANN_
 
 
 add_executable(generate_pq generate_pq.cpp)
-target_link_libraries(generate_pq ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
+target_link_libraries(generate_pq ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} ${MPI_CXX_LIBRARIES})
 
 
 add_executable(partition_data partition_data.cpp)
