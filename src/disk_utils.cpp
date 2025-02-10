@@ -820,8 +820,9 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
                           labels_to_medoids_file);
     }
     MPI_Barrier(MPI_COMM_WORLD);
+    std::vector<T>().swap(local_data); 
     diskann::cout << "---------------------------\n";
-    diskann::cout << "rank: " << world_rank <<  "merge finish\n";
+    diskann::cout << "rank: " << world_rank <<  " merge finish\n";
     diskann::cout << "---------------------------\n";
 
     return 0;
