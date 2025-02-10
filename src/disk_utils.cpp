@@ -751,8 +751,9 @@ int build_merged_vamana_index(std::string base_file, diskann::Metric compareMetr
             MPI_Recv(local_data.data(), data_size, MPI_FLOAT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
 
-    timer.reset();
+    
     MPI_Barrier(MPI_COMM_WORLD); // 等待主进程分区完毕
+    timer.reset();
     // 这里实现各个进程分片处理逻辑
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
         MallocExtension::instance()->ReleaseFreeMemory();
@@ -1372,6 +1373,7 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
                                             indexing_ram_budget, mem_index_path, medoids_path, centroids_path,
                                             build_pq_bytes, use_opq, num_threads, use_filters, labels_file_to_use,
                                             labels_to_medoids_path, universal_label, Lf);
+        diskann::cout << "rank: " << rank << " here\n";
     }
     else {
     // Gopal. Splitting diskann_dll into separate DLLs for search and build.
@@ -1437,6 +1439,8 @@ int build_disk_index(const char *dataFilePath, const char *indexFilePath, const 
     }
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
+    std::cout << "*******************\n";
+    std::cout << "rank hhhhhhhh: " << rank << std::endl;
     return 0;
 }
 
